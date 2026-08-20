@@ -94,6 +94,9 @@ Run the **Pool heater probe** workflow from the Actions tab.
 
 * `target: solar` prints the live figures, the parsed surplus, and every device
   with its power — find the Easee there and set `SOLAR_MANAGER_CAR_DEVICE_ID`.
+  It also prints **which authentication method your account accepted**; note it
+  down, because that is the one fact about this API we could not establish
+  without your credentials.
 * `target: zodiac` prints the raw equipment block and the parsed state. With
   `ZODIAC_SERIAL` unset it lists your devices instead.
 * `target: zodiac` with `send: on` / `off` / `boost` sends a real command, so you
@@ -181,6 +184,15 @@ starting to switch hardware.
   what puts `src/` on the path.
 
 ## Things worth knowing
+
+**How the Solar Manager key authenticates is discovered, not assumed.** Their
+API guide sits behind a support portal that was unreachable when this was built,
+and "Cloud API key" has two plausible meanings: a key exchanged for a short-lived
+token, or a bearer token in its own right. The client tries the exchange first,
+falls back to sending the key directly, and reports which one worked. A rejection
+mid-session is treated as an expired token once, then as the wrong strategy, then
+as a real failure — so a token expiring and a key of the wrong kind produce
+different, accurate errors rather than the same confusing one.
 
 **Neither API is official.** Solar Manager's is documented and supported;
 iAquaLink's is reverse-engineered by the Home Assistant community and can change

@@ -12,6 +12,8 @@ from conftest import NOON
 from pool_heater.config import Config, Credentials
 from pool_heater.models import Mode
 from pool_heater.solar_manager import (
+    AUTH_EXCHANGE,
+    AUTH_RAW_BEARER,
     SolarManagerAuthError,
     SolarManagerClient,
     SolarManagerError,
@@ -111,8 +113,69 @@ def test_the_legacy_email_login_is_used_when_no_api_key_is_set():
     assert session.calls[0][2] == {"email": "a@b.ch", "password": "pw"}
 
 
-def test_rejected_credentials_are_reported_as_an_auth_error():
-    client = solar_client({"/v3/auth/refresh": FakeResponse(status_code=401)})
+def test_a_rejected_exchange_falls_back_to_the_key_as_a_bearer_token():
+    """Solar Manager's docs were unreadable at build time, so the client tries both."""
+    session = FakeSession({
+        "/v3/auth/refresh": FakeResponse(status_code=401),
+        "/data/stream": FakeResponse(payload=STREAM),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+    })
+    client = SolarManagerClient(
+        Credentials(solar_api_key="my-key", solar_sm_id="sm1"), Config(), session=session
+    )
+    reading = client.read(NOON)
+
+    assert reading.surplus_w == 4800
+    assert client.auth_method == AUTH_RAW_BEARER
+    stream_call = next(call for call in session.calls if "/data/stream" in call[1])
+    assert stream_call is not None
+
+
+def test_the_working_exchange_is_preferred_and_the_fallback_left_alone():
+    session = FakeSession({
+        "/v3/auth/refresh": FakeResponse(payload={"access_token": "tok"}),
+        "/data/stream": FakeResponse(payload=STREAM),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+    })
+    client = SolarManagerClient(
+        Credentials(solar_api_key="my-key", solar_sm_id="sm1"), Config(), session=session
+    )
+    client.read(NOON)
+    assert client.auth_method == AUTH_EXCHANGE
+
+
+def test_when_no_method_is_accepted_the_error_says_which_were_tried():
+    client = solar_client({
+        "/v3/auth/refresh": FakeResponse(status_code=401),
+        "/data/stream": FakeResponse(status_code=401),
+    })
+    with pytest.raises(SolarManagerAuthError) as raised:
+        client.stream()
+    assert "rejected" in str(raised.value)
+
+
+def test_an_expired_token_is_reminted_without_changing_strategy():
+    calls = {"auth": 0, "stream": 0}
+
+    def refresh(**kwargs):
+        calls["auth"] += 1
+        return FakeResponse(payload={"access_token": f"tok{calls['auth']}"})
+
+    def stream(**kwargs):
+        calls["stream"] += 1
+        return FakeResponse(status_code=401) if calls["stream"] == 1 else FakeResponse(payload=STREAM)
+
+    client = solar_client({"/v3/auth/refresh": refresh, "/data/stream": stream})
+    assert client.stream()["eW"] == 3100
+    assert calls["auth"] == 2, "the token should have been reminted once"
+    assert client.auth_method == AUTH_EXCHANGE, "expiry is not a reason to change strategy"
+
+
+def test_a_rejected_legacy_login_is_reported_as_an_auth_error():
+    """With no API key there is no fallback, so the failure surfaces immediately."""
+    credentials = Credentials(solar_email="a@b.ch", solar_password="pw", solar_sm_id="sm1")
+    session = FakeSession({"/v1/oauth/login": FakeResponse(status_code=401)})
+    client = SolarManagerClient(credentials, Config(), session=session)
     with pytest.raises(SolarManagerAuthError):
         client.authenticate()
 

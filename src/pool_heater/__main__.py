@@ -107,8 +107,8 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     client = SolarManagerClient(credentials, config)
     try:
         client.authenticate()
-        print("authenticated against Solar Manager")
         raw = client.stream()
+        print(f"authenticated against Solar Manager: {client.auth_method}")
     except SolarManagerError as exc:
         print(f"Solar Manager probe failed: {exc}", file=sys.stderr)
         return 1

@@ -32,6 +32,12 @@ LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://cloud.solar-manager.ch"
 TIMEOUT = 30
 
+# Names for the authentication strategies, reported by `probe-solar` so the one
+# that actually works can be written down rather than rediscovered.
+AUTH_EXCHANGE = "API key exchanged for a token at /v3/auth/refresh"
+AUTH_RAW_BEARER = "API key sent directly as a bearer token"
+AUTH_LEGACY_LOGIN = "email and password at /v1/oauth/login"
+
 # Words that identify a car charger in the device list when no explicit device
 # id is configured. Solar Manager labels devices by tag name and device type.
 CAR_CHARGER_HINTS = ("easee", "charger", "ladestation", "wallbox", "car")
@@ -60,27 +66,64 @@ class SolarManagerClient:
         self._token: str | None = None
         self._token_type = "Bearer"
         self._device_meta: dict[str, dict[str, Any]] | None = None
+        self._strategy_index = 0
+        self.auth_method: str | None = None
 
     # -- auth ------------------------------------------------------------------
 
-    def authenticate(self) -> None:
-        """Get an access token, preferring the API key over the legacy login."""
-        if self._credentials.solar_api_key:
-            payload = {
-                "grant_type": "refresh_token",
-                "refresh_token": self._credentials.solar_api_key,
-            }
-            data = self._post_json("/v3/auth/refresh", payload)
-            token = data.get("access_token") or data.get("accessToken")
-            if not token:
-                raise SolarManagerAuthError(
-                    "no access_token in the /v3/auth/refresh response; "
-                    "check the API key has the 'read' scope"
-                )
-            self._token = token
-            self._token_type = data.get("token_type") or data.get("tokenType") or "Bearer"
-            return
+    def _strategies(self) -> list[tuple[str, Any]]:
+        """Ways to authenticate, most likely first.
 
+        Solar Manager's own documentation is behind a support portal we could not
+        read at build time, and the two plausible readings of "Cloud API key"
+        differ: the key may be exchanged for a short-lived access token, or it may
+        be the bearer token itself. Rather than guess, the client tries both and
+        remembers which one your account accepted -- `probe-solar` prints it.
+        """
+        if self._credentials.solar_api_key:
+            return [
+                (AUTH_EXCHANGE, self._auth_exchange),
+                (AUTH_RAW_BEARER, self._auth_raw_bearer),
+            ]
+        return [(AUTH_LEGACY_LOGIN, self._auth_legacy)]
+
+    def authenticate(self) -> None:
+        """Obtain a usable token, trying each strategy until one sticks."""
+        strategies = self._strategies()
+        failures: list[str] = []
+        while self._strategy_index < len(strategies):
+            name, attempt = strategies[self._strategy_index]
+            try:
+                attempt()
+            except SolarManagerError as exc:
+                failures.append(f"{name} -> {exc}")
+                self._strategy_index += 1
+                continue
+            if self.auth_method != name:
+                LOGGER.info("Solar Manager authenticated: %s", name)
+            self.auth_method = name
+            return
+        raise SolarManagerAuthError(
+            "no Solar Manager authentication method was accepted: " + "; ".join(failures)
+        )
+
+    def _auth_exchange(self) -> None:
+        data = self._post_json(
+            "/v3/auth/refresh",
+            {"grant_type": "refresh_token", "refresh_token": self._credentials.solar_api_key},
+        )
+        token = data.get("access_token") or data.get("accessToken")
+        if not token:
+            raise SolarManagerAuthError("no access_token in the /v3/auth/refresh response")
+        self._token = token
+        self._token_type = data.get("token_type") or data.get("tokenType") or "Bearer"
+
+    def _auth_raw_bearer(self) -> None:
+        """Use the API key as the bearer token itself. Costs no extra request."""
+        self._token = self._credentials.solar_api_key
+        self._token_type = "Bearer"
+
+    def _auth_legacy(self) -> None:
         if not (self._credentials.solar_email and self._credentials.solar_password):
             raise SolarManagerAuthError(
                 "set SOLAR_MANAGER_API_KEY, or both SOLAR_MANAGER_EMAIL and "
@@ -98,6 +141,15 @@ class SolarManagerClient:
             raise SolarManagerAuthError("no accessToken in the /v1/oauth/login response")
         self._token = token
         self._token_type = data.get("tokenType", "Bearer")
+
+    def _advance_strategy(self) -> bool:
+        """Give up on the current strategy and move to the next, if there is one."""
+        if self._strategy_index + 1 >= len(self._strategies()):
+            return False
+        self._strategy_index += 1
+        self._token = None
+        self.auth_method = None
+        return True
 
     def _headers(self) -> dict[str, str]:
         if not self._token:
@@ -129,19 +181,28 @@ class SolarManagerClient:
             )
         return _as_dict(response, path)
 
-    def _get_json(self, path: str, retry_auth: bool = True) -> Any:
+    def _get_json(self, path: str, attempt: int = 0) -> Any:
         try:
             response = self._session.get(
                 f"{self._base}{path}", headers=self._headers(), timeout=TIMEOUT
             )
         except requests.RequestException as exc:
             raise SolarManagerError(f"GET {path} failed: {exc}") from exc
-        if response.status_code in (401, 403) and retry_auth:
-            self._token = None
-            self.authenticate()
-            return self._get_json(path, retry_auth=False)
+
         if response.status_code in (401, 403):
-            raise SolarManagerAuthError(f"GET {path} rejected ({response.status_code})")
+            # First rejection: assume the token simply expired and mint another.
+            # Second: the strategy itself is wrong for this account, so move on
+            # to the next one. Third: we are out of ideas, and say so plainly.
+            if attempt == 0:
+                self._token = None
+                self.authenticate()
+                return self._get_json(path, attempt=1)
+            if attempt == 1 and self._advance_strategy():
+                return self._get_json(path, attempt=2)
+            raise SolarManagerAuthError(
+                f"GET {path} rejected ({response.status_code}) using "
+                f"{self.auth_method or 'no accepted method'}"
+            )
         if not response.ok:
             raise SolarManagerError(
                 f"GET {path} returned {response.status_code}: {response.text[:200]}"

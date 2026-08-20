@@ -51,10 +51,22 @@ cut short, so the conflict never arises.
 ### 1. Credentials
 
 **Solar Manager.** Log in to <https://web.solar-manager.ch/> and create a Cloud
-API key under *Profile → Cloud API key*, with at least the `read` scope. You also
-need your SM ID (the gateway id shown in the portal). If your account predates
-API keys, email <support@solar-manager.ch>; the older email/password login still
-works until 30 June 2027 and this project supports both.
+API key under *Profile → Cloud API key* (*Profil → Cloud-API-Schlüssel*), with at
+least the `read` scope. Nothing here writes to Solar Manager — the heater is
+controlled through iAquaLink — so `read` is enough. You also need your SM ID, the
+gateway id shown in the portal.
+
+Reach the key from your **account** menu, not from the gateway page. The portal
+has API settings in both places and they are different things: the account one
+offers scope checkboxes and issues a key for `cloud.solar-manager.ch`, while the
+gateway one configures the *local* API served on your home network and mentions
+letting "any device" make requests to it. A local key is useless here, because a
+GitHub Actions runner cannot reach your home network.
+
+If your profile has no Cloud API key entry at all, your account predates them.
+Use `SOLAR_MANAGER_EMAIL` and `SOLAR_MANAGER_PASSWORD` instead — that login works
+until 30 June 2027 and this project supports either. Emailing
+<support@solar-manager.ch> is the way to get a key issued if you want one.
 
 **iAquaLink.** The same email and password you use in the app. You also need the
 heat pump's serial number — leave `ZODIAC_SERIAL` unset and run the probe below,

@@ -175,7 +175,10 @@ starting to switch hardware.
   secret is written there; this repository is public and the tests enforce it.
 * **Stop it now** — set `DRY_RUN` to `true`, or disable the *Pool heater*
   workflow in the Actions tab. Neither touches the heater; use the app for that.
-* **Tests** — `pip install -r requirements-dev.txt && python -m pytest`.
+* **Tests** — from this `pool-heater/` directory:
+  `pip install -r requirements-dev.txt && python -m pytest`. Run it from the
+  repository root instead and it fails to import, because `pytest.ini` here is
+  what puts `src/` on the path.
 
 ## Things worth knowing
 

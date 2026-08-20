@@ -1,22 +1,41 @@
 """Solar Manager cloud client.
 
-Endpoints and field names follow the official external API (Swagger at
-https://external-web.solar-manager.ch/swagger) as used by the community Home
-Assistant integration:
+Behaviour here follows Solar Manager's own API article (Wissensdatenbank ->
+"Solar Manager API"), not guesswork:
 
-    POST /v3/auth/refresh    API key exchanged for a 24h access token
-    POST /v1/oauth/login     legacy email/password, deprecated 30.06.2027
-    GET  /v3/users/{smId}/data/stream   live figures, plus a devices[] array
+    Base URL      https://cloud.solar-manager.ch/   (HTTPS only)
+    Rate limit    500 requests per hour per endpoint
+                  ...except /v3/auth/refresh, capped at 50 per hour
 
-Live stream fields, all watts unless noted:
-    pW   PV production          cW   house consumption
-    iW   grid import            eW   grid export
-    bcW  battery charging       bdW  battery discharging
-    soc  battery state of charge (%)
+Four authentication methods are offered. We prefer the header one, because this
+runs as a stateless five-minute job with nowhere safe to cache a token: the
+repository is public, so writing an access token into the state file is not an
+option. Sending the key as a header sidesteps the token lifecycle completely and
+never touches the rate-limited refresh endpoint.
+
+    1. X-API-KEY header          <- preferred here: no exchange, no caching
+    2. POST /v3/auth/refresh     {"grant_type": "refresh_token", ...}
+    3. Basic auth, username + API key as the password
+    4. Email and password        deprecated, ends 30 June 2027
+
+Do NOT enable "Erneuerung erlauben" (allow renewal) on the API key. That turns it
+into a rotating refresh token: every exchange issues a new key and invalidates
+the old one, which a job that cannot persist secrets would break on its second
+run. The static key is what this wants.
+
+Live figures come from the data stream. Powers are watts:
+    pW  production        cW  consumption
+    bcW battery charging  bdW battery discharging
+    iW  grid import       eW  grid export        soc  state of charge (%)
+
+Grid import and export are derived from the energy balance when the stream does
+not carry them: the local /v2/point endpoint documents only the watt-hour forms,
+so the watt pair cannot be assumed present.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from datetime import datetime
@@ -34,9 +53,15 @@ TIMEOUT = 30
 
 # Names for the authentication strategies, reported by `probe-solar` so the one
 # that actually works can be written down rather than rediscovered.
+AUTH_HEADER_KEY = "API key in the X-API-KEY header"
 AUTH_EXCHANGE = "API key exchanged for a token at /v3/auth/refresh"
-AUTH_RAW_BEARER = "API key sent directly as a bearer token"
+AUTH_BASIC_KEY = "HTTP basic auth, API key as the password"
 AUTH_LEGACY_LOGIN = "email and password at /v1/oauth/login"
+
+# Words that identify the house battery in the device list, used only when the
+# stream carries no top-level state of charge. Cars report `soc` too, so a car
+# must never be mistaken for the battery here.
+BATTERY_HINTS = ("battery", "batterie", "speicher", "akku", "pylontech")
 
 # Words that identify a car charger in the device list when no explicit device
 # id is configured. Solar Manager labels devices by tag name and device type.
@@ -63,8 +88,7 @@ class SolarManagerClient:
         self._config = config
         self._base = base_url.rstrip("/")
         self._session = session or requests.Session()
-        self._token: str | None = None
-        self._token_type = "Bearer"
+        self._auth_headers: dict[str, str] | None = None
         self._device_meta: dict[str, dict[str, Any]] | None = None
         self._strategy_index = 0
         self.auth_method: str | None = None
@@ -72,23 +96,25 @@ class SolarManagerClient:
     # -- auth ------------------------------------------------------------------
 
     def _strategies(self) -> list[tuple[str, Any]]:
-        """Ways to authenticate, most likely first.
+        """Ways to authenticate, best-for-this-architecture first.
 
-        Solar Manager's own documentation is behind a support portal we could not
-        read at build time, and the two plausible readings of "Cloud API key"
-        differ: the key may be exchanged for a short-lived access token, or it may
-        be the bearer token itself. Rather than guess, the client tries both and
-        remembers which one your account accepted -- `probe-solar` prints it.
+        The header method is first on purpose. It costs no extra request, never
+        touches the 50-per-hour refresh endpoint, and needs nothing cached
+        between runs. The exchange is Solar Manager's general recommendation and
+        is kept as the fallback for accounts where header auth is not enabled.
         """
         if self._credentials.solar_api_key:
-            return [
+            options = [
+                (AUTH_HEADER_KEY, self._auth_header_key),
                 (AUTH_EXCHANGE, self._auth_exchange),
-                (AUTH_RAW_BEARER, self._auth_raw_bearer),
             ]
+            if self._credentials.solar_email:
+                options.append((AUTH_BASIC_KEY, self._auth_basic_key))
+            return options
         return [(AUTH_LEGACY_LOGIN, self._auth_legacy)]
 
     def authenticate(self) -> None:
-        """Obtain a usable token, trying each strategy until one sticks."""
+        """Obtain usable credentials, trying each method until one sticks."""
         strategies = self._strategies()
         failures: list[str] = []
         while self._strategy_index < len(strategies):
@@ -107,6 +133,10 @@ class SolarManagerClient:
             "no Solar Manager authentication method was accepted: " + "; ".join(failures)
         )
 
+    def _auth_header_key(self) -> None:
+        """Send the key as a header. No request, no token, nothing to expire."""
+        self._auth_headers = {"X-API-KEY": self._credentials.solar_api_key or ""}
+
     def _auth_exchange(self) -> None:
         data = self._post_json(
             "/v3/auth/refresh",
@@ -115,13 +145,13 @@ class SolarManagerClient:
         token = data.get("access_token") or data.get("accessToken")
         if not token:
             raise SolarManagerAuthError("no access_token in the /v3/auth/refresh response")
-        self._token = token
-        self._token_type = data.get("token_type") or data.get("tokenType") or "Bearer"
+        token_type = data.get("token_type") or data.get("tokenType") or "Bearer"
+        self._auth_headers = {"Authorization": f"{token_type} {token}"}
 
-    def _auth_raw_bearer(self) -> None:
-        """Use the API key as the bearer token itself. Costs no extra request."""
-        self._token = self._credentials.solar_api_key
-        self._token_type = "Bearer"
+    def _auth_basic_key(self) -> None:
+        pair = f"{self._credentials.solar_email}:{self._credentials.solar_api_key}"
+        encoded = base64.b64encode(pair.encode("utf-8")).decode("ascii")
+        self._auth_headers = {"Authorization": f"Basic {encoded}"}
 
     def _auth_legacy(self) -> None:
         if not (self._credentials.solar_email and self._credentials.solar_password):
@@ -139,25 +169,21 @@ class SolarManagerClient:
         token = data.get("accessToken") or data.get("access_token")
         if not token:
             raise SolarManagerAuthError("no accessToken in the /v1/oauth/login response")
-        self._token = token
-        self._token_type = data.get("tokenType", "Bearer")
+        self._auth_headers = {"Authorization": f"{data.get('tokenType', 'Bearer')} {token}"}
 
     def _advance_strategy(self) -> bool:
-        """Give up on the current strategy and move to the next, if there is one."""
+        """Give up on the current method and move to the next, if there is one."""
         if self._strategy_index + 1 >= len(self._strategies()):
             return False
         self._strategy_index += 1
-        self._token = None
+        self._auth_headers = None
         self.auth_method = None
         return True
 
     def _headers(self) -> dict[str, str]:
-        if not self._token:
+        if not self._auth_headers:
             self.authenticate()
-        return {
-            "Authorization": f"{self._token_type} {self._token}",
-            "Accept": "application/json",
-        }
+        return {**(self._auth_headers or {}), "Accept": "application/json"}
 
     # -- transport -------------------------------------------------------------
 
@@ -194,7 +220,7 @@ class SolarManagerClient:
             # Second: the strategy itself is wrong for this account, so move on
             # to the next one. Third: we are out of ideas, and say so plainly.
             if attempt == 0:
-                self._token = None
+                self._auth_headers = None
                 self.authenticate()
                 return self._get_json(path, attempt=1)
             if attempt == 1 and self._advance_strategy():
@@ -252,18 +278,48 @@ class SolarManagerClient:
         """One complete house reading, ready for the control logic."""
         data = self.stream()
         charge_w, discharge_w = _battery_powers(data)
+        import_w, export_w = _grid_powers(data, charge_w, discharge_w)
         return Reading(
             taken_at=now,
             pv_w=_watts(data, "pW"),
             consumption_w=_watts(data, "cW"),
-            grid_import_w=_watts(data, "iW"),
-            grid_export_w=_watts(data, "eW"),
+            grid_import_w=import_w,
+            grid_export_w=export_w,
             battery_charge_w=charge_w,
             battery_discharge_w=discharge_w,
-            soc_pct=_optional_number(data.get("soc")),
+            soc_pct=self.battery_soc(data),
             car_w=self.car_power(data),
             raw=data,
         )
+
+    def battery_soc(self, stream_data: dict[str, Any]) -> float | None:
+        """House battery state of charge, in percent.
+
+        Prefers the top-level figure. Failing that, looks for a battery in the
+        device list -- carefully, because cars report `soc` as well and taking a
+        car's charge level for the house battery would corrupt the SOC_FLOOR
+        rule in the one direction that matters.
+        """
+        top_level = _optional_number(stream_data.get("soc"))
+        if top_level is not None:
+            return top_level
+
+        devices = stream_data.get("devices")
+        if not isinstance(devices, list):
+            return None
+        meta = self.device_metadata()
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            soc = _optional_number(device.get("soc"))
+            if soc is None:
+                continue
+            info = meta.get(str(device.get("_id", "")), {})
+            if _looks_like_car_charger(device, info):
+                continue
+            if _looks_like_battery(device, info):
+                return soc
+        return None
 
     def car_power(self, stream_data: dict[str, Any]) -> float:
         """Current draw of the car charger, or 0 if it cannot be identified."""
@@ -336,10 +392,40 @@ def _battery_powers(data: dict[str, Any]) -> tuple[float, float]:
     return (net, 0.0) if net >= 0 else (0.0, -net)
 
 
+def _grid_powers(
+    data: dict[str, Any], charge_w: float, discharge_w: float
+) -> tuple[float, float]:
+    """Grid import and export in watts, both non-negative.
+
+    The cloud stream carries `iW`/`eW` directly. The documented `/v2/point`
+    schema does not -- it lists only the watt-hour forms, accumulated over an
+    interval whose length is not reported. Rather than guess at that interval,
+    fall back to the energy balance, which needs only the watt figures that are
+    always present:
+
+        exported = production + battery discharge - consumption - battery charge
+
+    A positive result is export, a negative one is import.
+    """
+    if "iW" in data or "eW" in data:
+        return abs(_watts(data, "iW")), abs(_watts(data, "eW"))
+    net_export = _watts(data, "pW") + discharge_w - _watts(data, "cW") - charge_w
+    return (0.0, net_export) if net_export >= 0 else (-net_export, 0.0)
+
+
+def _looks_like_battery(device: dict[str, Any], meta: dict[str, Any]) -> bool:
+    return any(hint in _describe(device, meta) for hint in BATTERY_HINTS)
+
+
 def _looks_like_car_charger(device: dict[str, Any], meta: dict[str, Any]) -> bool:
-    haystack = " ".join(
+    return any(hint in _describe(device, meta) for hint in CAR_CHARGER_HINTS)
+
+
+def _describe(device: dict[str, Any], meta: dict[str, Any]) -> str:
+    """Everything the API says about a device, lowercased, for hint matching."""
+    tag = meta.get("tag") if isinstance(meta.get("tag"), dict) else {}
+    return " ".join(
         str(source.get(key, ""))
-        for source in (device, meta, meta.get("tag", {}) if isinstance(meta.get("tag"), dict) else {})
+        for source in (device, meta, tag)
         for key in ("type", "device_type", "deviceType", "device_group", "name", "model")
     ).lower()
-    return any(hint in haystack for hint in CAR_CHARGER_HINTS)

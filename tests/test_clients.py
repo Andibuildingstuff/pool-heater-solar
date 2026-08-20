@@ -12,8 +12,9 @@ from conftest import NOON
 from pool_heater.config import Config, Credentials
 from pool_heater.models import Mode
 from pool_heater.solar_manager import (
+    AUTH_BASIC_KEY,
     AUTH_EXCHANGE,
-    AUTH_RAW_BEARER,
+    AUTH_HEADER_KEY,
     SolarManagerAuthError,
     SolarManagerClient,
     SolarManagerError,
@@ -81,9 +82,9 @@ def solar_client(routes, **cred_kwargs):
 # --- Solar Manager ---------------------------------------------------------------
 
 
-def test_the_api_key_is_exchanged_for_an_access_token():
+def test_the_api_key_is_sent_as_a_header_without_any_token_exchange():
+    """Preferred: /v3/auth/refresh is capped at 50 calls an hour and needs caching."""
     session = FakeSession({
-        "/v3/auth/refresh": FakeResponse(payload={"access_token": "tok", "expires_in": 86400}),
         "/data/stream": FakeResponse(payload=STREAM),
         "/v1/info/sensors": FakeResponse(payload=SENSORS),
     })
@@ -92,10 +93,55 @@ def test_the_api_key_is_exchanged_for_an_access_token():
     )
     reading = client.read(NOON)
 
-    method, url, body, _ = session.calls[0]
-    assert body == {"grant_type": "refresh_token", "refresh_token": "my-key"}
-    assert "/v3/auth/refresh" in url
+    assert client.auth_method == AUTH_HEADER_KEY
+    assert not any("/v3/auth/refresh" in call[1] for call in session.calls)
+    stream = next(call for call in session.calls if "/data/stream" in call[1])
     assert reading.surplus_w == 4800  # 3100 exported + 1700 into the battery
+
+
+def test_header_auth_sends_the_documented_header_name():
+    captured = {}
+
+    def stream(**kwargs):
+        captured.update(kwargs["headers"])
+        return FakeResponse(payload=STREAM)
+
+    client = solar_client({"/data/stream": stream})
+    client.stream()
+    assert captured["X-API-KEY"] == "key"
+
+
+def test_the_exchange_is_used_when_header_auth_is_refused():
+    session = FakeSession({
+        "/data/stream": lambda **kw: (
+            FakeResponse(status_code=401)
+            if "X-API-KEY" in kw["headers"]
+            else FakeResponse(payload=STREAM)
+        ),
+        "/v3/auth/refresh": FakeResponse(payload={"access_token": "tok"}),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+    })
+    client = SolarManagerClient(
+        Credentials(solar_api_key="my-key", solar_sm_id="sm1"), Config(), session=session
+    )
+    reading = client.read(NOON)
+
+    exchange = next(call for call in session.calls if "/v3/auth/refresh" in call[1])
+    assert exchange[2] == {"grant_type": "refresh_token", "refresh_token": "my-key"}
+    assert client.auth_method == AUTH_EXCHANGE
+    assert reading.surplus_w == 4800
+
+
+def test_basic_auth_is_offered_only_when_a_username_is_known():
+    with_email = SolarManagerClient(
+        Credentials(solar_api_key="k", solar_email="a@b.ch", solar_sm_id="sm"),
+        Config(), session=FakeSession({}),
+    )
+    without = SolarManagerClient(
+        Credentials(solar_api_key="k", solar_sm_id="sm"), Config(), session=FakeSession({})
+    )
+    assert AUTH_BASIC_KEY in [name for name, _ in with_email._strategies()]
+    assert AUTH_BASIC_KEY not in [name for name, _ in without._strategies()]
 
 
 def test_the_legacy_email_login_is_used_when_no_api_key_is_set():
@@ -113,62 +159,27 @@ def test_the_legacy_email_login_is_used_when_no_api_key_is_set():
     assert session.calls[0][2] == {"email": "a@b.ch", "password": "pw"}
 
 
-def test_a_rejected_exchange_falls_back_to_the_key_as_a_bearer_token():
-    """Solar Manager's docs were unreadable at build time, so the client tries both."""
-    session = FakeSession({
-        "/v3/auth/refresh": FakeResponse(status_code=401),
-        "/data/stream": FakeResponse(payload=STREAM),
-        "/v1/info/sensors": FakeResponse(payload=SENSORS),
-    })
-    client = SolarManagerClient(
-        Credentials(solar_api_key="my-key", solar_sm_id="sm1"), Config(), session=session
-    )
-    reading = client.read(NOON)
-
-    assert reading.surplus_w == 4800
-    assert client.auth_method == AUTH_RAW_BEARER
-    stream_call = next(call for call in session.calls if "/data/stream" in call[1])
-    assert stream_call is not None
-
-
-def test_the_working_exchange_is_preferred_and_the_fallback_left_alone():
-    session = FakeSession({
-        "/v3/auth/refresh": FakeResponse(payload={"access_token": "tok"}),
-        "/data/stream": FakeResponse(payload=STREAM),
-        "/v1/info/sensors": FakeResponse(payload=SENSORS),
-    })
-    client = SolarManagerClient(
-        Credentials(solar_api_key="my-key", solar_sm_id="sm1"), Config(), session=session
-    )
-    client.read(NOON)
-    assert client.auth_method == AUTH_EXCHANGE
-
-
 def test_when_no_method_is_accepted_the_error_says_which_were_tried():
     client = solar_client({
         "/v3/auth/refresh": FakeResponse(status_code=401),
         "/data/stream": FakeResponse(status_code=401),
+        "/v1/info/sensors": FakeResponse(status_code=401),
     })
     with pytest.raises(SolarManagerAuthError) as raised:
         client.stream()
     assert "rejected" in str(raised.value)
 
 
-def test_an_expired_token_is_reminted_without_changing_strategy():
-    calls = {"auth": 0, "stream": 0}
-
-    def refresh(**kwargs):
-        calls["auth"] += 1
-        return FakeResponse(payload={"access_token": f"tok{calls['auth']}"})
+def test_a_single_rejection_is_retried_before_the_method_is_abandoned():
+    calls = {"stream": 0}
 
     def stream(**kwargs):
         calls["stream"] += 1
         return FakeResponse(status_code=401) if calls["stream"] == 1 else FakeResponse(payload=STREAM)
 
-    client = solar_client({"/v3/auth/refresh": refresh, "/data/stream": stream})
+    client = solar_client({"/data/stream": stream})
     assert client.stream()["eW"] == 3100
-    assert calls["auth"] == 2, "the token should have been reminted once"
-    assert client.auth_method == AUTH_EXCHANGE, "expiry is not a reason to change strategy"
+    assert client.auth_method == AUTH_HEADER_KEY, "one rejection is not a reason to switch"
 
 
 def test_a_rejected_legacy_login_is_reported_as_an_auth_error():
@@ -371,3 +382,73 @@ def test_an_unfamiliar_equipment_key_is_still_found():
 
 def test_an_empty_shadow_reads_as_off_rather_than_exploding():
     assert parse_shadow({}, Config()).on is False
+
+
+# --- field mapping the documented schema forced ------------------------------------
+
+
+def test_grid_powers_are_derived_when_the_watt_pair_is_absent():
+    """/v2/point documents only iWh/eWh, so iW/eW cannot be assumed present."""
+    client = solar_client({
+        "/data/stream": FakeResponse(payload={
+            "pW": 7000, "cW": 2000, "bcW": 1000, "bdW": 0, "soc": 70,
+        }),
+        "/v1/info/sensors": FakeResponse(payload=[]),
+    })
+    reading = client.read(NOON)
+    # 7000 produced - 2000 used - 1000 stored = 4000 exported
+    assert reading.grid_export_w == 4000
+    assert reading.grid_import_w == 0
+    assert reading.surplus_w == 5000  # 4000 exported + 1000 into the battery
+
+
+def test_the_derived_balance_reports_import_when_the_house_is_short():
+    client = solar_client({
+        "/data/stream": FakeResponse(payload={"pW": 500, "cW": 3000, "bdW": 800, "soc": 40}),
+        "/v1/info/sensors": FakeResponse(payload=[]),
+    })
+    reading = client.read(NOON)
+    assert reading.grid_import_w == 1700  # 3000 needed - 500 made - 800 from the battery
+    assert reading.grid_export_w == 0
+
+
+def test_the_reported_watt_pair_wins_over_the_derivation():
+    client = solar_client({
+        "/data/stream": FakeResponse(payload=STREAM),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+    })
+    reading = client.read(NOON)
+    assert (reading.grid_import_w, reading.grid_export_w) == (0, 3100)
+
+
+def test_battery_soc_falls_back_to_the_battery_device():
+    client = solar_client({
+        "/data/stream": FakeResponse(payload={
+            "pW": 5000, "cW": 1000,
+            "devices": [{"_id": "bat", "soc": 64}],
+        }),
+        "/v1/info/sensors": FakeResponse(payload=[
+            {"_id": "bat", "type": "battery", "name": "Pylontech"},
+        ]),
+    })
+    assert client.read(NOON).soc_pct == 64
+
+
+def test_a_cars_charge_level_is_never_mistaken_for_the_house_battery():
+    """Cars report `soc` too. Reading one as the battery would corrupt SOC_FLOOR."""
+    client = solar_client({
+        "/data/stream": FakeResponse(payload={
+            "pW": 5000, "cW": 1000,
+            "devices": [{"_id": "aaa", "soc": 88, "power": 4100}],
+        }),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+    })
+    assert client.read(NOON).soc_pct is None
+
+
+def test_an_unknown_soc_is_left_unknown_rather_than_guessed():
+    client = solar_client({
+        "/data/stream": FakeResponse(payload={"pW": 5000, "cW": 1000}),
+        "/v1/info/sensors": FakeResponse(payload=[]),
+    })
+    assert client.read(NOON).soc_pct is None

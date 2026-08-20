@@ -169,6 +169,13 @@ powered down.
 The first cycle of a new season sends a notification rather than silently
 starting to switch hardware.
 
+## A manual override, if you want one later
+
+Solar Manager supports a **virtual switch** — a device that controls nothing but
+can be read back through the API. Creating one and having this loop treat it as a
+veto would give you an override you can flip from the Solar Manager app, without
+touching repository variables. Not built, but it is the natural place to put one.
+
 ## Operating it
 
 * **Logs** — Actions tab → *Pool heater*. Every cycle prints the reading and the
@@ -185,14 +192,23 @@ starting to switch hardware.
 
 ## Things worth knowing
 
-**How the Solar Manager key authenticates is discovered, not assumed.** Their
-API guide sits behind a support portal that was unreachable when this was built,
-and "Cloud API key" has two plausible meanings: a key exchanged for a short-lived
-token, or a bearer token in its own right. The client tries the exchange first,
-falls back to sending the key directly, and reports which one worked. A rejection
-mid-session is treated as an expired token once, then as the wrong strategy, then
-as a real failure — so a token expiring and a key of the wrong kind produce
-different, accurate errors rather than the same confusing one.
+**Solar Manager's rate limits are 500 requests per hour per endpoint**, except
+`/v3/auth/refresh`, which allows only 50 and whose docs say the access token must
+therefore be cached. This job runs 12 times an hour and reads one or two
+endpoints per cycle, so it sits far inside the general limit — but it has nowhere
+safe to cache a token, since the repository is public. That is why it prefers the
+`X-API-KEY` header method: no exchange, no token lifecycle, and the rate-limited
+endpoint is never touched. The exchange remains as a fallback, and `probe-solar`
+reports which method your account accepted.
+
+**Do not tick "Erneuerung erlauben" (allow renewal) on the API key.** That makes
+it a *rotating* refresh token: every exchange issues a new key and invalidates
+the old one, so an integration that cannot persist secrets between runs — this
+one — would authenticate once and then be locked out. Leave it off and the key
+stays static.
+
+**Solar Manager offer no customer support for their API**, in their own words.
+Their article is the documentation, and there is nobody to ask about it.
 
 **Neither API is official.** Solar Manager's is documented and supported;
 iAquaLink's is reverse-engineered by the Home Assistant community and can change
@@ -212,6 +228,17 @@ burst of bunched-up runs cannot pass for ten minutes of steady surplus, and a
 long gap resets the streak rather than pretending the condition held through it.
 Note also that GitHub disables scheduled workflows in a repository with no
 activity for 60 days, and emails you when it does.
+
+**Grid import and export are derived when they are not reported.** The cloud
+stream carries `iW` and `eW` directly, but the documented `/v2/point` schema
+lists only their watt-hour forms, accumulated over an interval whose length is
+not published. So when the watt pair is missing the client works them out from
+the energy balance — production plus battery discharge, less consumption and
+battery charging — rather than guessing at an interval. Likewise, if the stream
+has no top-level state of charge, it looks for the battery in the device list,
+taking care never to read the *car's* charge level as the house battery's. An
+unknown state of charge counts as below `SOC_FLOOR`, which is the cautious
+direction: it stops the heater rather than letting it drain the battery blind.
 
 **The car-priority margin is headroom, not arithmetic.** The surplus figure
 already nets the Easee out — power going into the car is neither exported nor

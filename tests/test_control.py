@@ -300,3 +300,13 @@ def test_bunched_up_runs_do_not_satisfy_the_delay(config, state):
     assert not control.streak_held(
         state.surplus_since, state.surplus_samples, at(1.0), config.on_delay_min, config
     )
+
+
+def test_an_unknown_state_of_charge_is_treated_as_below_the_floor(config, state):
+    """If we cannot tell how full the battery is, assume the cautious answer."""
+    state.last_on_at = NOON - timedelta(minutes=60)
+    blind = Reading(taken_at=NOON, battery_discharge_w=900, soc_pct=None)
+    reading, now = feed(state, config, [blind] * 2)
+    decision = decide(now, reading, ON, state, config)
+    assert decision.action is Action.TURN_OFF
+    assert "unknown" in decision.reason

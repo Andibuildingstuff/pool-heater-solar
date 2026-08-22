@@ -19,7 +19,7 @@ from .config import Config, ConfigError, Credentials
 from .models import Mode
 from .notify import Notifier
 from .runner import Runner
-from .solar_manager import SolarManagerClient, SolarManagerError
+from .solar_manager import SolarManagerClient, SolarManagerError, id_fields
 from .state import StateStore
 from .zodiac import ZodiacClient, ZodiacError
 
@@ -179,13 +179,25 @@ def _discover_sm_id(client: SolarManagerClient) -> int:
         print("\nNothing answered. Fall back to the address bar.")
         return 1
 
+    printed = False
     for source, payload in findings:
+        identifiers = id_fields(payload)
+        if not identifiers:
+            continue
+        printed = True
         print(f"\n--- {source} ---")
-        print(json.dumps(payload, indent=2, sort_keys=True, default=str)[:3000])
+        for key, value in sorted(identifiers.items()):
+            print(f"  {key}: {value}")
+
+    if not printed:
+        print("\nEndpoints answered, but none carried anything id-shaped.")
+        return 1
 
     print(
-        "\nLook for a field named something like smId, sm_id, gatewayId or _id,\n"
-        "set it as the SOLAR_MANAGER_SM_ID secret, and run this probe again."
+        "\nOnly identifier fields are shown: these endpoints also return your name,\n"
+        "email and address, and workflow logs on a public repository are public.\n"
+        "\n`sm_id` is the one to use. Set it as the SOLAR_MANAGER_SM_ID secret and\n"
+        "run this probe again -- it will then read live power figures instead."
     )
     return 0
 

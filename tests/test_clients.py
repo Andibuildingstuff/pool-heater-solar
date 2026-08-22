@@ -18,6 +18,7 @@ from pool_heater.solar_manager import (
     SolarManagerAuthError,
     SolarManagerClient,
     SolarManagerError,
+    id_fields,
 )
 from pool_heater.zodiac import ZodiacAuthError, ZodiacClient, ZodiacRateLimited, parse_shadow
 
@@ -511,3 +512,40 @@ def test_discovery_leaves_the_client_usable_afterwards():
     })
     client.discover_sm_id()
     assert client.read(NOON).surplus_w == 4800
+
+
+def test_discovery_output_keeps_identifiers_and_drops_everything_else():
+    """Workflow logs on a public repo are public; the account endpoint is chatty.
+
+    The values below are invented. Real identifiers do not belong in a fixture in
+    a public repository, however harmless they look on their own.
+    """
+    payload = [{
+        "sm_id": "1000000FAKE0000",
+        "gateway_id": "000000000000000000000001",
+        "user_id": "000000000000000000000002",
+        "email": "someone@example.com",
+        "first_name": "Someone",
+        "last_name": "Surname",
+        "street": "A Street 3",
+        "city": "A Town",
+        "zip": "0000",
+        "installer": "An Installer AG",
+    }]
+    found = id_fields(payload)
+    assert found == {
+        "sm_id": "1000000FAKE0000",
+        "gateway_id": "000000000000000000000001",
+        "user_id": "000000000000000000000002",
+    }
+    for leaked in ("email", "first_name", "street", "zip", "installer"):
+        assert leaked not in found
+
+
+def test_identifier_extraction_reaches_into_nested_shapes():
+    assert id_fields({"data": {"gateway": {"sm_id": "X1"}}}) == {"sm_id": "X1"}
+
+
+def test_identifier_extraction_gives_up_rather_than_recursing_forever():
+    deep = {"a": {"b": {"c": {"d": {"e": {"f": {"sm_id": "buried"}}}}}}}
+    assert id_fields(deep) == {}

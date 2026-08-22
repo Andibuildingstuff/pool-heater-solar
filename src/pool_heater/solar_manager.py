@@ -67,6 +67,14 @@ BATTERY_HINTS = ("battery", "batterie", "speicher", "akku", "pylontech")
 # endpoints that consume the ID but not one that lists it, so these are informed
 # guesses -- used only by the probe, which reports what answers rather than
 # depending on any of them.
+# Keys worth printing from a discovery response. Everything else is dropped: the
+# account endpoint returns name, email and street address, and workflow logs on a
+# public repository are public. A probe that helps you configure the thing must
+# not publish your home address as a side effect.
+ID_FIELD_NAMES = (
+    "sm_id", "smid", "gateway_id", "gatewayid", "user_id", "userid", "_id", "id",
+)
+
 SM_ID_DISCOVERY_PATHS = (
     "/v1/info/users",
     "/v1/users",
@@ -493,3 +501,27 @@ def _jwt_claims(token: str) -> dict[str, Any] | None:
         return json.loads(base64.urlsafe_b64decode(payload))
     except Exception:
         return None
+
+
+def id_fields(payload: Any, _depth: int = 0) -> dict[str, Any]:
+    """Pull only the identifier-shaped keys out of a discovery response.
+
+    Deliberately an allowlist rather than a denylist of sensitive keys: these
+    responses are not fully documented, so anything unrecognised is dropped
+    rather than printed and hoped about.
+    """
+    found: dict[str, Any] = {}
+    if _depth > 4:
+        return found
+    if isinstance(payload, list):
+        for item in payload:
+            found.update(id_fields(item, _depth + 1))
+        return found
+    if not isinstance(payload, dict):
+        return found
+    for key, value in payload.items():
+        if isinstance(value, (dict, list)):
+            found.update(id_fields(value, _depth + 1))
+        elif key.lower() in ID_FIELD_NAMES:
+            found[key] = value
+    return found

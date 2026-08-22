@@ -63,6 +63,19 @@ AUTH_LEGACY_LOGIN = "email and password at /v1/oauth/login"
 # must never be mistaken for the battery here.
 BATTERY_HINTS = ("battery", "batterie", "speicher", "akku", "pylontech")
 
+# Endpoints worth asking when the SM ID is unknown. Solar Manager documents the
+# endpoints that consume the ID but not one that lists it, so these are informed
+# guesses -- used only by the probe, which reports what answers rather than
+# depending on any of them.
+SM_ID_DISCOVERY_PATHS = (
+    "/v1/info/users",
+    "/v1/users",
+    "/v1/info/user",
+    "/v3/users",
+    "/v1/gateways",
+    "/v1/info/gateways",
+)
+
 # Words that identify a car charger in the device list when no explicit device
 # id is configured. Solar Manager labels devices by tag name and device type.
 CAR_CHARGER_HINTS = ("easee", "charger", "ladestation", "wallbox", "car")
@@ -252,6 +265,38 @@ class SolarManagerClient:
             raise SolarManagerError("stream response was not an object")
         return data
 
+    def discover_sm_id(self) -> list[tuple[str, Any]]:
+        """Hunt for the SM ID so it does not have to be found by hand.
+
+        Solar Manager's article documents the endpoints that *use* the ID but
+        not one that lists it, so this tries the plausible candidates and reports
+        whatever answers. It is diagnostic only -- `probe-solar` calls it, the
+        control loop never does.
+        """
+        found: list[tuple[str, Any]] = []
+
+        # An exchanged access token is a JWT, and its claims usually name the
+        # user or installation it was minted for.
+        if self._credentials.solar_api_key:
+            try:
+                self._auth_exchange()
+                header = (self._auth_headers or {}).get("Authorization", "")
+                claims = _jwt_claims(header.split(" ")[-1])
+                if claims:
+                    found.append(("access token claims", claims))
+            except SolarManagerError as exc:
+                LOGGER.debug("token exchange unavailable for discovery: %s", exc)
+            finally:
+                self._auth_headers = None
+                self._strategy_index = 0
+
+        for path in SM_ID_DISCOVERY_PATHS:
+            try:
+                found.append((path, self._get_json(path)))
+            except SolarManagerError as exc:
+                LOGGER.debug("%s did not answer: %s", path, exc)
+        return found
+
     def device_metadata(self) -> dict[str, dict[str, Any]]:
         """Device list keyed by `_id`, used to find the car charger."""
         if self._device_meta is not None:
@@ -429,3 +474,22 @@ def _describe(device: dict[str, Any], meta: dict[str, Any]) -> str:
         for source in (device, meta, tag)
         for key in ("type", "device_type", "deviceType", "device_group", "name", "model")
     ).lower()
+
+
+def _jwt_claims(token: str) -> dict[str, Any] | None:
+    """Decode a JWT payload without verifying it.
+
+    We are reading it for a hint, not trusting it for a decision, so no signature
+    check is needed or wanted -- and the key to check it with is the server's.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        import json
+
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None

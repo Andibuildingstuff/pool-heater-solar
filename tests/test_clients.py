@@ -452,3 +452,62 @@ def test_an_unknown_soc_is_left_unknown_rather_than_guessed():
         "/v1/info/sensors": FakeResponse(payload=[]),
     })
     assert client.read(NOON).soc_pct is None
+
+
+# --- finding the SM ID -------------------------------------------------------------
+
+
+def test_discovery_reports_whichever_endpoint_answers():
+    client = solar_client({
+        "/v1/info/users": FakeResponse(payload=[{"smId": "SM-42", "name": "Home"}]),
+        "/v1/users": FakeResponse(status_code=404),
+        "/v1/info/user": FakeResponse(status_code=404),
+        "/v3/users": FakeResponse(status_code=404),
+        "/v1/gateways": FakeResponse(status_code=404),
+        "/v1/info/gateways": FakeResponse(status_code=404),
+        "/v3/auth/refresh": FakeResponse(status_code=404),
+    })
+    findings = dict(client.discover_sm_id())
+    assert findings["/v1/info/users"] == [{"smId": "SM-42", "name": "Home"}]
+
+
+def test_discovery_reads_the_claims_out_of_an_exchanged_token():
+    """A JWT usually names the installation it was minted for."""
+    import base64 as b64
+    import json as js
+
+    def encode(obj):
+        return b64.urlsafe_b64encode(js.dumps(obj).encode()).decode().rstrip("=")
+
+    token = f"{encode({'alg': 'HS256'})}.{encode({'sub': 'user-1', 'smId': 'SM-42'})}.sig"
+    client = solar_client({
+        "/v3/auth/refresh": FakeResponse(payload={"access_token": token}),
+        "/v1/": FakeResponse(status_code=404),
+        "/v3/users": FakeResponse(status_code=404),
+    })
+    findings = dict(client.discover_sm_id())
+    assert findings["access token claims"]["smId"] == "SM-42"
+
+
+def test_discovery_returns_nothing_rather_than_failing_when_all_doors_are_shut():
+    client = solar_client({
+        "/v3/auth/refresh": FakeResponse(status_code=404),
+        "/v1/": FakeResponse(status_code=404),
+        "/v3/users": FakeResponse(status_code=404),
+    })
+    assert client.discover_sm_id() == []
+
+
+def test_discovery_leaves_the_client_usable_afterwards():
+    """It fiddles with auth state to try the exchange; it must put it back."""
+    # Routes are matched by substring in order, so the stream must come first:
+    # "/v3/users" is a prefix of "/v3/users/{smId}/data/stream".
+    client = solar_client({
+        "/data/stream": FakeResponse(payload=STREAM),
+        "/v1/info/sensors": FakeResponse(payload=SENSORS),
+        "/v3/auth/refresh": FakeResponse(status_code=404),
+        "/v1/": FakeResponse(status_code=404),
+        "/v3/users": FakeResponse(status_code=404),
+    })
+    client.discover_sm_id()
+    assert client.read(NOON).surplus_w == 4800

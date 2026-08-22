@@ -119,8 +119,16 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     client = SolarManagerClient(credentials, config)
     try:
         client.authenticate()
-        raw = client.stream()
         print(f"authenticated against Solar Manager: {client.auth_method}")
+    except SolarManagerError as exc:
+        print(f"Solar Manager authentication failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not credentials.solar_sm_id:
+        return _discover_sm_id(client)
+
+    try:
+        raw = client.stream()
     except SolarManagerError as exc:
         print(f"Solar Manager probe failed: {exc}", file=sys.stderr)
         return 1
@@ -155,6 +163,30 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     print(f"  battery SoC        {soc:>8}")
     print(f"  SURPLUS            {reading.surplus_w:>8.0f} W  (export + battery charging)")
     print(f"\n  start threshold is {config.on_threshold_w:.0f} W")
+    return 0
+
+
+def _discover_sm_id(client: SolarManagerClient) -> int:
+    """Print anything that looks like an SM ID, so it need not be hunted by hand."""
+    print(
+        "\nSOLAR_MANAGER_SM_ID is not set, so this is asking the API what it knows.\n"
+        "Solar Manager documents the endpoints that use the id but not one that\n"
+        "lists it, so this is a best effort. If nothing useful appears below, the\n"
+        "id is usually in the portal's address bar while you view your installation."
+    )
+    findings = client.discover_sm_id()
+    if not findings:
+        print("\nNothing answered. Fall back to the address bar.")
+        return 1
+
+    for source, payload in findings:
+        print(f"\n--- {source} ---")
+        print(json.dumps(payload, indent=2, sort_keys=True, default=str)[:3000])
+
+    print(
+        "\nLook for a field named something like smId, sm_id, gatewayId or _id,\n"
+        "set it as the SOLAR_MANAGER_SM_ID secret, and run this probe again."
+    )
     return 0
 
 

@@ -1,0 +1,64 @@
+# Manual probes, for bringing the automation up and for diagnosing it later.
+# Nothing here runs on a schedule, and nothing here switches the heater unless
+# you explicitly pick a command in the `send` input.
+
+name: Pool heater probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which API to probe"
+        type: choice
+        default: solar
+        options: [solar, zodiac]
+      send:
+        description: "zodiac only: send a real command to confirm the app reflects it"
+        type: choice
+        default: none
+        options: [none, on, off, boost, ecosilence, smart]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOLAR_MANAGER_API_KEY: ${{ secrets.SOLAR_MANAGER_API_KEY }}
+      SOLAR_MANAGER_EMAIL: ${{ secrets.SOLAR_MANAGER_EMAIL }}
+      SOLAR_MANAGER_PASSWORD: ${{ secrets.SOLAR_MANAGER_PASSWORD }}
+      SOLAR_MANAGER_SM_ID: ${{ secrets.SOLAR_MANAGER_SM_ID }}
+      SOLAR_MANAGER_CAR_DEVICE_ID: ${{ vars.SOLAR_MANAGER_CAR_DEVICE_ID }}
+      ZODIAC_EMAIL: ${{ secrets.ZODIAC_EMAIL }}
+      ZODIAC_PASSWORD: ${{ secrets.ZODIAC_PASSWORD }}
+      ZODIAC_SERIAL: ${{ secrets.ZODIAC_SERIAL }}
+      ZODIAC_MODE_BOOST: ${{ vars.ZODIAC_MODE_BOOST }}
+      ZODIAC_MODE_ECOSILENCE: ${{ vars.ZODIAC_MODE_ECOSILENCE }}
+      ZODIAC_MODE_SMART: ${{ vars.ZODIAC_MODE_SMART }}
+      SETPOINT_C: ${{ vars.SETPOINT_C }}
+      TIMEZONE: ${{ vars.TIMEZONE }}
+      PYTHONPATH: src
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+
+      - name: Probe Solar Manager
+        if: inputs.target == 'solar'
+        run: python -m pool_heater probe-solar
+
+      - name: Probe the heat pump
+        if: inputs.target == 'zodiac'
+        run: |
+          if [ "${{ inputs.send }}" = "none" ]; then
+            python -m pool_heater probe-zodiac
+          else
+            python -m pool_heater probe-zodiac --send "${{ inputs.send }}"
+          fi

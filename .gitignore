@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# State lives on the pool-heater-state branch, not in the working tree.
+state/

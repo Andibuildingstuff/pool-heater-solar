@@ -185,10 +185,8 @@ touching repository variables. Not built, but it is the natural place to put one
   secret is written there; this repository is public and the tests enforce it.
 * **Stop it now** — set `DRY_RUN` to `true`, or disable the *Pool heater*
   workflow in the Actions tab. Neither touches the heater; use the app for that.
-* **Tests** — from this `pool-heater/` directory:
-  `pip install -r requirements-dev.txt && python -m pytest`. Run it from the
-  repository root instead and it fails to import, because `pytest.ini` here is
-  what puts `src/` on the path.
+* **Tests** — `pip install -r requirements-dev.txt && python -m pytest` from the
+  repository root. `pytest.ini` is what puts `src/` on the path.
 
 ## Things worth knowing
 

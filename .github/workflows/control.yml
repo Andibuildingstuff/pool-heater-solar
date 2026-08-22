@@ -1,0 +1,126 @@
+# Solar-surplus control for the pool heat pump.
+#
+# Every tunable is read from repository *variables* (Settings -> Secrets and
+# variables -> Actions -> Variables). Leave one unset and the default from
+# src/pool_heater/config.py applies, so the defaults live in exactly
+# one place. Credentials come from repository *secrets*.
+#
+# The loop is stateful. State is kept as a single-commit `pool-heater-state`
+# branch rather than committed here, so this project's history does not collect
+# a commit every five minutes.
+
+name: Pool heater
+
+on:
+  schedule:
+    # Every five minutes. GitHub runs scheduled workflows on a best-effort
+    # basis and can delay them under load, which is why the control logic
+    # debounces on elapsed time as well as on sample count.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Override DRY_RUN for this one run"
+        type: choice
+        default: inherit
+        options: [inherit, dry-run, live]
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two cycles interleave: they would race on the state branch.
+  group: pool-heater
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      STATE_BRANCH: pool-heater-state
+      STATE_PATH: state/pool-heater-state.json
+
+      # --- credentials -------------------------------------------------------
+      SOLAR_MANAGER_API_KEY: ${{ secrets.SOLAR_MANAGER_API_KEY }}
+      SOLAR_MANAGER_EMAIL: ${{ secrets.SOLAR_MANAGER_EMAIL }}
+      SOLAR_MANAGER_PASSWORD: ${{ secrets.SOLAR_MANAGER_PASSWORD }}
+      SOLAR_MANAGER_SM_ID: ${{ secrets.SOLAR_MANAGER_SM_ID }}
+      ZODIAC_EMAIL: ${{ secrets.ZODIAC_EMAIL }}
+      ZODIAC_PASSWORD: ${{ secrets.ZODIAC_PASSWORD }}
+      ZODIAC_SERIAL: ${{ secrets.ZODIAC_SERIAL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # --- tunables (unset = the documented default) -------------------------
+      DRY_RUN: ${{ inputs.mode == 'live' && 'false' || (inputs.mode == 'dry-run' && 'true' || vars.DRY_RUN) }}
+      ON_THRESHOLD: ${{ vars.ON_THRESHOLD }}
+      IMPORT_THRESHOLD: ${{ vars.IMPORT_THRESHOLD }}
+      DISCHARGE_THRESHOLD: ${{ vars.DISCHARGE_THRESHOLD }}
+      SOC_FLOOR: ${{ vars.SOC_FLOOR }}
+      ON_DELAY: ${{ vars.ON_DELAY }}
+      OFF_DELAY: ${{ vars.OFF_DELAY }}
+      MIN_RUN: ${{ vars.MIN_RUN }}
+      MIN_OFF: ${{ vars.MIN_OFF }}
+      MAX_SWITCHES_PER_DAY: ${{ vars.MAX_SWITCHES_PER_DAY }}
+      HARD_OFF_START: ${{ vars.HARD_OFF_START }}
+      HARD_OFF_END: ${{ vars.HARD_OFF_END }}
+      SEASON_START: ${{ vars.SEASON_START }}
+      SEASON_END: ${{ vars.SEASON_END }}
+      OFF_SEASON_MODE: ${{ vars.OFF_SEASON_MODE }}
+      FORCE_OFF_SEASON: ${{ vars.FORCE_OFF_SEASON }}
+      TIMEZONE: ${{ vars.TIMEZONE }}
+      ECOSILENCE_ENABLED: ${{ vars.ECOSILENCE_ENABLED }}
+      CAR_PRIORITY: ${{ vars.CAR_PRIORITY }}
+      CAR_ACTIVE_W: ${{ vars.CAR_ACTIVE_W }}
+      CAR_PRIORITY_MARGIN_W: ${{ vars.CAR_PRIORITY_MARGIN_W }}
+      SOLAR_MANAGER_CAR_DEVICE_ID: ${{ vars.SOLAR_MANAGER_CAR_DEVICE_ID }}
+      SETPOINT_C: ${{ vars.SETPOINT_C }}
+      RECONCILE_INTERVAL_MIN: ${{ vars.RECONCILE_INTERVAL_MIN }}
+      OFF_SEASON_POLL_MIN: ${{ vars.OFF_SEASON_POLL_MIN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore state
+        run: |
+          mkdir -p "$(dirname "$STATE_PATH")"
+          if git fetch --depth=1 origin "$STATE_BRANCH" 2>/dev/null; then
+            git show "FETCH_HEAD:state.json" > "$STATE_PATH" \
+              && echo "restored state from $STATE_BRANCH" \
+              || echo "state branch has no state.json yet; starting fresh"
+          else
+            echo "no $STATE_BRANCH branch yet; starting fresh"
+          fi
+
+      - name: Run one cycle
+        id: cycle
+        run: python -m pool_heater run --state "$STATE_PATH"
+        env:
+          PYTHONPATH: src
+
+      - name: Save state
+        # Always: a failed cycle still advances the failure counters and the
+        # fail-safe flag, and losing that would re-alert on every run.
+        if: always()
+        env:
+          GIT_AUTHOR_NAME: pool-heater-bot
+          GIT_AUTHOR_EMAIL: pool-heater-bot@users.noreply.github.com
+          GIT_COMMITTER_NAME: pool-heater-bot
+          GIT_COMMITTER_EMAIL: pool-heater-bot@users.noreply.github.com
+        run: |
+          [ -f "$STATE_PATH" ] || { echo "no state to save"; exit 0; }
+          # Written with plumbing on purpose: each push replaces the branch with
+          # a single parentless commit, so the state branch never grows.
+          blob=$(git hash-object -w "$STATE_PATH")
+          tree=$(printf '100644 blob %s\tstate.json\n' "$blob" | git mktree)
+          commit=$(git commit-tree "$tree" -m "pool heater state")
+          git push --force origin "$commit:refs/heads/$STATE_BRANCH"

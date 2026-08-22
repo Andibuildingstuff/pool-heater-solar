@@ -85,6 +85,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(config: Config, credentials: Credentials, state_path: str) -> int:
     missing = credentials.missing_for_control()
+    if missing and not credentials.any_configured():
+        # A repository whose secrets have not been filled in yet. The schedule
+        # starts running the moment the workflow lands on the default branch, so
+        # treating this as a failure would mean a failure notification every five
+        # minutes until setup finishes. It is not a fault; there is just nothing
+        # to do yet.
+        print(
+            "No credentials configured yet, so there is nothing to control.\n"
+            "Add the repository secrets, then run the probe workflow:\n  "
+            + "\n  ".join(missing),
+        )
+        return 0
     if missing:
         print("missing credentials: " + ", ".join(missing), file=sys.stderr)
         return 2

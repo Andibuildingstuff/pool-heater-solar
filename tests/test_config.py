@@ -116,3 +116,13 @@ def test_email_and_password_also_satisfy_them():
         zodiac_email="e", zodiac_password="p", zodiac_serial="s",
     )
     assert credentials.missing_for_control() == []
+
+
+def test_an_untouched_repository_reads_as_not_configured():
+    """The schedule runs from the moment the workflow lands, before setup."""
+    assert Credentials().any_configured() is False
+
+
+def test_a_half_filled_setup_reads_as_configured():
+    """Some secrets present and others missing is a fault, not a fresh start."""
+    assert Credentials(solar_api_key="k").any_configured() is True

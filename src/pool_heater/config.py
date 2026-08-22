@@ -147,6 +147,19 @@ class Credentials:
             telegram_chat_id=_env("TELEGRAM_CHAT_ID"),
         )
 
+    def any_configured(self) -> bool:
+        """True if someone has started setting this up.
+
+        Distinguishes "not configured yet" from "configured wrongly". The first
+        is the normal state of a freshly created repository and is not worth
+        alarming about; the second is a real fault worth failing on.
+        """
+        return any((
+            self.solar_api_key, self.solar_email, self.solar_password,
+            self.solar_sm_id, self.zodiac_email, self.zodiac_password,
+            self.zodiac_serial,
+        ))
+
     def missing_for_control(self) -> list[str]:
         """Names of the secrets a live control run cannot proceed without."""
         missing = []

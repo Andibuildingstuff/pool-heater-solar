@@ -243,8 +243,23 @@ already nets the Easee out — power going into the car is neither exported nor
 stored. The margin exists so the heater does not claim the last watt of surplus
 and leave the charger to ramp into the grid a minute later.
 
-**What has not been tested against real hardware.** The control logic, state
-handling and both clients are covered by 120 tests, including a full simulated
-day. But no part of this has spoken to your Solar Manager gateway or your heat
-pump. Step 3 above is the step that turns the reverse-engineered API details into
-verified ones — do it before step 5.
+**What has and has not met real hardware.** The control logic, state handling and
+both clients are covered by 147 tests including a full simulated day, but tests
+only prove the code does what it was written to do. Against the real thing:
+
+*Verified.* Solar Manager authenticates by `X-API-KEY` header on a live account,
+no token exchange involved. The cloud stream carries `pW`, `cW`, `iW`, `eW`,
+`bcW`, `bdW` and `soc` exactly as mapped, at a ten-second interval (`iv`), so the
+energy-balance derivation is a genuine fallback rather than the normal path.
+Devices come back with readable types — `Inverter`, `Smart Meter`, `Battery`,
+`Car Charging` — and the charger is found by type without needing
+`SOLAR_MANAGER_CAR_DEVICE_ID` set.
+
+*Still unverified.* Everything on the iAquaLink side: login, the shadow read, the
+`st` mode codes, and whether a written command actually reaches the heat pump.
+That is what `probe-zodiac` is for, and it is the last thing standing between a
+dry run and live control.
+
+*Assumed.* `ON_THRESHOLD = 3000 W` is a guess at the heater's electrical draw.
+The first Boost run is what settles it: watch consumption jump in Solar Manager
+and set the threshold a little above the step.

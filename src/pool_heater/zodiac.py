@@ -35,9 +35,22 @@ BASE_URL = "https://prod.zodiac-io.com"
 DEVICES_URL = "https://r-api.iaqualink.net/devices.json"
 # Shared by every iAquaLink client; not a secret and not per-user.
 DEFAULT_API_KEY = "EOOEMOW4YR6QNB07"
-USER_AGENT = "pool-heater-solar-automation/1.0 (+github actions)"
+# The iAquaLink app's own client string. The cloud rejects the shadow endpoints
+# for some device families otherwise, and this is your account talking to your
+# own heat pump either way.
+USER_AGENT = "okhttp/3.12.0"
 TIMEOUT = 30
 EQUIPMENT_KEY = "hp_0"
+
+# Shadow reads are tried in this order. v1 is first because it is what the
+# community integrations for this device family actually use; v2 is documented
+# as equivalent but answered "missing signature" against a real zs500, which
+# suggests it now expects AWS request signing that v1 does not.
+SHADOW_READ_TEMPLATES = (
+    "/devices/v1/{serial}/shadow",
+    "/devices/v2/{serial}/shadow",
+)
+SHADOW_WRITE_TEMPLATE = "/devices/v1/{serial}/shadow"
 
 # The shadow does not document a water-temperature field consistently across
 # firmware versions, so we try the keys seen in the wild and fall back to none.
@@ -73,6 +86,7 @@ class ZodiacClient:
         self._id_token: str | None = None
         self._auth_token: str | None = None
         self._user_id: str | None = None
+        self.shadow_path: str | None = None
 
     # -- auth ------------------------------------------------------------------
 
@@ -162,31 +176,52 @@ class ZodiacClient:
         return serial
 
     def get_shadow(self, retry_auth: bool = True) -> dict[str, Any]:
-        path = f"{self._base}/devices/v2/{self._serial()}/shadow"
-        try:
-            response = self._session.get(path, headers=self._headers(), timeout=TIMEOUT)
-        except requests.RequestException as exc:
-            raise ZodiacError(f"shadow read failed: {exc}") from exc
-        if response.status_code in (401, 403) and retry_auth:
-            self._id_token = None
-            self.login()
-            return self.get_shadow(retry_auth=False)
-        if response.status_code == 429:
-            raise ZodiacRateLimited("iAquaLink rate-limited the shadow read")
-        if not response.ok:
-            raise ZodiacError(f"shadow read returned {response.status_code}: {response.text[:200]}")
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise ZodiacError("shadow read did not return JSON") from exc
-        if not isinstance(data, dict):
-            raise ZodiacError("shadow read did not return an object")
-        return data
+        """Read the device shadow, trying each known endpoint shape in turn.
+
+        The variants are not interchangeable in practice, and which one an
+        account accepts is not documented anywhere trustworthy, so the working
+        one is discovered and then remembered for the rest of the run.
+        """
+        serial = self._serial()
+        templates = (
+            (self.shadow_path,) if self.shadow_path else SHADOW_READ_TEMPLATES
+        )
+        failures: list[str] = []
+
+        for template in templates:
+            path = f"{self._base}{template.format(serial=serial)}"
+            try:
+                response = self._session.get(path, headers=self._headers(), timeout=TIMEOUT)
+            except requests.RequestException as exc:
+                raise ZodiacError(f"shadow read failed: {exc}") from exc
+
+            if response.status_code in (401, 403) and retry_auth:
+                self._id_token = None
+                self.login()
+                return self.get_shadow(retry_auth=False)
+            if response.status_code == 429:
+                raise ZodiacRateLimited("iAquaLink rate-limited the shadow read")
+
+            if response.ok:
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    raise ZodiacError("shadow read did not return JSON") from exc
+                if not isinstance(data, dict):
+                    raise ZodiacError("shadow read did not return an object")
+                if self.shadow_path != template:
+                    LOGGER.info("iAquaLink shadow endpoint: %s", template)
+                self.shadow_path = template
+                return data
+
+            failures.append(f"{template} -> {response.status_code} {response.text[:120]}")
+
+        raise ZodiacError("no shadow endpoint answered: " + "; ".join(failures))
 
     def set_desired(self, fields: dict[str, Any], retry_auth: bool = True) -> dict[str, Any]:
         """Write fields under equipment.hp_0 in the AWS-IoT desired-state shape."""
         payload = {"state": {"desired": {"equipment": {EQUIPMENT_KEY: fields}}}}
-        path = f"{self._base}/devices/v1/{self._serial()}/shadow"
+        path = f"{self._base}{SHADOW_WRITE_TEMPLATE.format(serial=self._serial())}"
         try:
             response = self._session.post(
                 path, json=payload, headers=self._headers(json_body=True), timeout=TIMEOUT

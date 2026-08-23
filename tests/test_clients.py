@@ -20,7 +20,13 @@ from pool_heater.solar_manager import (
     SolarManagerError,
     id_fields,
 )
-from pool_heater.zodiac import ZodiacAuthError, ZodiacClient, ZodiacRateLimited, parse_shadow
+from pool_heater.zodiac import (
+    ZodiacAuthError,
+    ZodiacClient,
+    ZodiacError,
+    ZodiacRateLimited,
+    parse_shadow,
+)
 
 
 class FakeResponse:
@@ -305,7 +311,7 @@ def test_login_sends_the_shared_api_key_and_keeps_the_id_token():
     assert body["email"] == "a@b.ch" and body["apiKey"]
 
     _, shadow_url, _, _ = session.calls[1]
-    assert "/devices/v2/S1/shadow" in shadow_url
+    assert "/devices/v1/S1/shadow" in shadow_url
 
 
 def test_the_authorization_header_is_the_raw_id_token():
@@ -549,3 +555,89 @@ def test_identifier_extraction_reaches_into_nested_shapes():
 def test_identifier_extraction_gives_up_rather_than_recursing_forever():
     deep = {"a": {"b": {"c": {"d": {"e": {"f": {"sm_id": "buried"}}}}}}}
     assert id_fields(deep) == {}
+
+
+# --- which shadow endpoint answers ---------------------------------------------
+
+
+def test_the_read_falls_back_to_v2_when_v1_refuses():
+    """Neither variant is documented reliably, so the client finds out."""
+    def shadow(**kwargs):
+        return FakeResponse(payload=SHADOW)
+
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": FakeResponse(status_code=404, text="nope"),
+        "/devices/v2/S1/shadow": shadow,
+    })
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    assert client.read_state().on is True
+    assert client.shadow_path == "/devices/v2/{serial}/shadow"
+
+
+def test_a_missing_signature_on_v2_does_not_stop_v1_working():
+    """The real failure: v2 answered 400 'missing signature' against a zs500."""
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": FakeResponse(payload=SHADOW),
+        "/devices/v2/S1/shadow": FakeResponse(
+            status_code=400, text='{"msg":"request is invalid; missing signature"}'
+        ),
+    })
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    assert client.read_state().on is True
+    assert client.shadow_path == "/devices/v1/{serial}/shadow"
+
+
+def test_the_working_endpoint_is_remembered_for_the_rest_of_the_run():
+    calls = {"v1": 0}
+
+    def v1(**kwargs):
+        calls["v1"] += 1
+        return FakeResponse(payload=SHADOW)
+
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": v1,
+        "/devices/v2/S1/shadow": FakeResponse(status_code=400),
+    })
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    client.read_state()
+    client.read_state()
+    assert calls["v1"] == 2
+    assert not any("/devices/v2/" in call[1] for call in session.calls)
+
+
+def test_when_no_endpoint_answers_the_error_names_each_attempt():
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": FakeResponse(status_code=400, text="missing signature"),
+        "/devices/v2/S1/shadow": FakeResponse(status_code=400, text="missing signature"),
+    })
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    with pytest.raises(ZodiacError) as raised:
+        client.get_shadow()
+    message = str(raised.value)
+    assert "/devices/v1/" in message and "/devices/v2/" in message
+
+
+def test_commands_still_go_to_the_write_endpoint():
+    session = FakeSession({"/users/v1/login": LOGIN_OK, "/shadow": FakeResponse(payload={})})
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    client.turn_off()
+    assert "/devices/v1/S1/shadow" in session.calls[-1][1]

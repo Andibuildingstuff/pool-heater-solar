@@ -255,6 +255,7 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
 
     from .zodiac import equipment_from_shadow, parse_shadow
 
+    print(f"\nshadow endpoint that answered: {client.shadow_path}")
     print("\n--- raw equipment block ---")
     print(json.dumps(equipment_from_shadow(shadow), indent=2, sort_keys=True, default=str))
 

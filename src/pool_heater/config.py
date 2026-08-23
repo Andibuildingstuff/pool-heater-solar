@@ -182,7 +182,7 @@ class Config:
 
     # --- switching thresholds -------------------------------------------------
     on_threshold_w: float = 3000.0
-    heater_draw_w: float = 2000.0
+    heater_draw_w: float = 2500.0
     import_threshold_w: float = 300.0
     discharge_threshold_w: float = 500.0
     soc_floor_pct: float = 90.0
@@ -270,7 +270,7 @@ class Config:
     def from_env(cls) -> "Config":
         config = cls(
             on_threshold_w=_float("ON_THRESHOLD", 3000.0),
-            heater_draw_w=_float("HEATER_DRAW_W", 2000.0),
+            heater_draw_w=_float("HEATER_DRAW_W", 2500.0),
             import_threshold_w=_float("IMPORT_THRESHOLD", 300.0),
             discharge_threshold_w=_float("DISCHARGE_THRESHOLD", 500.0),
             soc_floor_pct=_float("SOC_FLOOR", 90.0),

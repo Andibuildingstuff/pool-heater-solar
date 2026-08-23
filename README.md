@@ -142,7 +142,7 @@ and the default applies; the defaults live in one place, `src/pool_heater/config
 | Variable | Default | Notes |
 |---|---|---|
 | `ON_THRESHOLD` | `3000` | W of surplus needed to start; must be >= `HEATER_DRAW_W` |
-| `HEATER_DRAW_W` | `2000` | what the heater actually consumes; set from a measured Boost run |
+| `HEATER_DRAW_W` | `2500` | what the heater actually consumes; measured at ~2320 W on a TD5 in Boost, rounded up for headroom |
 | `IMPORT_THRESHOLD` | `300` | W of grid import that counts as paying for it. A deadband, not a zero: a solar house draws 50-100 W continuously for its own electronics, and that floor is present with or without the heater |
 | `DISCHARGE_THRESHOLD` | `500` | W of battery discharge that counts |
 | `SOC_FLOOR` | `90` | % below which discharge stops the heater |
@@ -278,8 +278,15 @@ is why nothing here judges a start until `START_GRACE` has passed.
 *Still unverified.* The `st` code for Smart mode. Boost is 0 and EcoSilence is 1;
 2 is a guess that only matters with `ECOSILENCE_ENABLED` turned on.
 
-*Assumed.* `ON_THRESHOLD = 3000 W`. The shadow reports the unit as "5 kW", and a
-reading taken while it was heating suggests an electrical draw nearer 1.5–2 kW —
-so the default likely demands far more surplus than the heater needs. Watch the
-consumption step in Solar Manager during a Boost run and set the threshold just
-above it.
+*Measured.* The heater draws about **2320 W** in Boost. Two readings fifteen
+minutes apart, with the car idle in both, put house consumption at 997 W with it
+off and 3320 W with it running and reporting `status 2`. Both readings balance to
+the watt against production, so this is a real step rather than noise.
+
+That settles `ON_THRESHOLD`. At 3000 W it sits comfortably above the draw, which
+is what keeps the never-import guarantee true. Do not lower it below
+`HEATER_DRAW_W`; the config refuses to start if you do.
+
+The `hs: "5 kW"` in the shadow is the unit's heat output, not its electrical
+input — at a coefficient of performance around two in these conditions, 2.3 kW of
+electricity is what produces it.

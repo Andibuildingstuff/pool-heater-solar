@@ -144,10 +144,10 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
         for device in devices:
             device_id = str(device.get("_id", "?"))
             info = meta.get(device_id, {})
-            label = info.get("name") or (info.get("tag") or {}).get("name") or "?"
+            # Names withheld for the same reason as on the heat pump side.
             print(
-                f"  {device_id}  {label!r:32} "
-                f"type={info.get('type', '?')} power={device.get('power', '?')}"
+                f"  {device_id}  "
+                f"type={info.get('type', '?'):16} power={device.get('power', '?')}"
             )
 
     reading = client.read(datetime.now(config.tz))
@@ -219,10 +219,14 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
             return 1
         print("\n--- devices on the account: set ZODIAC_SERIAL to the heat pump's serial ---")
         for device in devices:
+            # Names are withheld. People name their equipment after the house or
+            # the street, and workflow logs on a public repository are public.
+            # The type is what tells you which device is the heat pump anyway.
             print(
                 f"  {device.get('serial_number', '?')}  "
-                f"{device.get('name', '?')!r}  type={device.get('device_type', '?')}"
+                f"type={device.get('device_type', '?')}"
             )
+        print("\n  (device names are not shown: they often give away an address)")
         return 0
 
     if command:

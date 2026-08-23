@@ -10,8 +10,8 @@ on:
       target:
         description: "Which API to probe"
         type: choice
-        default: solar
-        options: [solar, zodiac]
+        default: both
+        options: [both, solar, zodiac]
       send:
         description: "zodiac only: send a real command to confirm the app reflects it"
         type: choice
@@ -51,11 +51,14 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Probe Solar Manager
-        if: inputs.target == 'solar'
+        if: inputs.target == 'solar' || inputs.target == 'both'
         run: python -m pool_heater probe-solar
 
       - name: Probe the heat pump
-        if: inputs.target == 'zodiac'
+        # !cancelled() rather than a plain condition: if the Solar Manager step
+        # fails we still want the heat pump result, not a job that stops half way
+        # through and leaves the more interesting half unknown.
+        if: "!cancelled() && (inputs.target == 'zodiac' || inputs.target == 'both')"
         run: |
           if [ "${{ inputs.send }}" = "none" ]; then
             python -m pool_heater probe-zodiac

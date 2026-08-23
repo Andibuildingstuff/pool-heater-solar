@@ -175,7 +175,9 @@ COMMAND_SETTLE_S = 8
 
 # The fields worth watching after a command. The shadow also carries counters and
 # timers that change on their own, which would bury the answer in noise.
-WATCHED_FIELDS = ("state", "st", "tsp", "status", "fan")
+# `reason` earns its place here: a unit that is told to run and does not will
+# leave state at 0 and change reason instead, which is the whole story.
+WATCHED_FIELDS = ("state", "st", "tsp", "status", "fan", "hp", "reason")
 
 
 def _report_change(before: dict, after: dict) -> None:
@@ -193,6 +195,13 @@ def _report_change(before: dict, after: dict) -> None:
         return
     for key, was, now in changes:
         print(f"  {key}: {was} -> {now}")
+
+
+def _truthy_state(reported: dict) -> bool:
+    """Is the unit actually doing something, by its own account?"""
+    return bool(reported.get("state")) and (
+        bool(reported.get("status")) or bool(reported.get("fan"))
+    )
 
 
 def _degrees(value: float | None) -> str:

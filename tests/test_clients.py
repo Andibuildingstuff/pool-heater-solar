@@ -735,3 +735,30 @@ def test_turning_on_sets_the_power_switch_as_well_as_the_mode():
     client.turn_on(Mode.BOOST)
     fields = session.calls[-1][2]["state"]["desired"]["equipment"]["hp_0"]
     assert fields["state"] == 1 and fields["st"] == 0
+
+
+def test_the_desired_block_is_read_separately_from_the_reported_one():
+    """The app shows desired. Only reported says what the hardware is doing."""
+    from pool_heater.zodiac import desired_from_shadow
+
+    shadow = {"state": {
+        "desired": {"equipment": {"hp_0": {"state": 1, "st": 0}}},
+        "reported": {"equipment": {"hp_0": {"state": 0, "status": 0, "reason": 6}}},
+    }}
+    assert desired_from_shadow(shadow) == {"state": 1, "st": 0}
+    assert equipment_from_shadow(shadow)["reason"] == 6
+
+
+def test_a_shadow_with_no_desired_block_reads_as_empty_not_as_reported():
+    from pool_heater.zodiac import desired_from_shadow
+
+    assert desired_from_shadow(REAL_TD5) == {}
+
+
+def test_a_unit_told_to_run_but_reporting_off_is_not_treated_as_on():
+    """state 1 in desired, 0 in reported: commanded, not running."""
+    shadow = {"state": {
+        "desired": {"equipment": {"hp_0": {"state": 1}}},
+        "reported": {"equipment": {"hp_0": {"state": 0, "status": 0, "fan": 0}}},
+    }}
+    assert parse_shadow(shadow, Config()).on is False

@@ -277,6 +277,26 @@ class ZodiacClient:
 # --- shadow parsing ------------------------------------------------------------
 
 
+def desired_from_shadow(shadow: dict[str, Any]) -> dict[str, Any]:
+    """What the cloud has been asked to make the device do.
+
+    The app shows this. The device reporting something else means the command
+    was accepted but has not been carried out -- which is not the same as
+    working, and is exactly the case worth being able to see.
+    """
+    state = shadow.get("state")
+    if not isinstance(state, dict):
+        return {}
+    desired = state.get("desired")
+    if not isinstance(desired, dict):
+        return {}
+    equipment = desired.get("equipment")
+    if not isinstance(equipment, dict):
+        return {}
+    unit = equipment.get(EQUIPMENT_KEY)
+    return unit if isinstance(unit, dict) else {}
+
+
 def equipment_from_shadow(shadow: dict[str, Any]) -> dict[str, Any]:
     """Pull `state.reported.equipment.hp_0` out, tolerating shape differences."""
     state = shadow.get("state")

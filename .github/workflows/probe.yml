@@ -16,7 +16,9 @@ on:
         description: "Send a real command. on/off is the power switch; mode-* only changes the mode"
         type: choice
         default: none
-        options: [none, on, off, mode-boost, mode-ecosilence, mode-smart]
+        # Never write bare on/off here: YAML reads them as booleans and the
+        # dropdown ends up offering "true" and "false".
+        options: [none, power-on, power-off, mode-boost, mode-ecosilence, mode-smart]
 
 permissions:
   contents: read

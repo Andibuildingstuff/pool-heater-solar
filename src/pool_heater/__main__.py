@@ -55,9 +55,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     zodiac.add_argument(
         "--send",
-        choices=["on", "off", "mode-boost", "mode-ecosilence", "mode-smart"],
+        choices=["power-on", "power-off", "mode-boost", "mode-ecosilence", "mode-smart"],
         help=(
-            "send a real command. 'on'/'off' are the power switch; the mode-* "
+            "send a real command. power-on/power-off are the switch; the mode-* "
             "options only change which mode it runs in, not whether it runs"
         ),
     )
@@ -189,7 +189,7 @@ def _report_change(before: dict, after: dict) -> None:
     if not changes:
         print("  NOTHING CHANGED. The device reports the same state as before.")
         print("  If you expected the heater to start, note that a mode command sets")
-        print("  which mode it runs in, not whether it runs -- use 'on' for that.")
+        print("  which mode it runs in, not whether it runs -- use power-on for that.")
         return
     for key, was, now in changes:
         print(f"  {key}: {was} -> {now}")
@@ -273,9 +273,9 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
     if command:
         try:
             before = equipment_from_shadow(client.get_shadow())
-            if command == "on":
+            if command == "power-on":
                 client.turn_on(config.on_mode, config.setpoint_c)
-            elif command == "off":
+            elif command == "power-off":
                 client.turn_off()
             else:
                 client.set_mode(Mode(command.removeprefix("mode-")))

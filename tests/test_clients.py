@@ -285,7 +285,10 @@ SHADOW = {
     "deviceId": "SERIAL1",
     "state": {
         "reported": {
-            "equipment": {"hp_0": {"state": 1, "st": 0, "tsp": 28, "status": 2, "wt": 26}}
+            "equipment": {"hp_0": {
+                "state": 1, "st": 0, "status": 2, "tsp": 280,
+                "sns_1": {"state": "connected", "type": "water", "value": 260},
+            }}
         }
     },
 }
@@ -339,6 +342,8 @@ def test_rate_limiting_is_reported_distinctly():
 
 
 def test_turning_on_writes_state_mode_and_setpoint():
+    """Without a prior read the scale defaults to tenths, which every device
+    of this family has used, so 28 C is written as 280."""
     session = FakeSession({"/users/v1/login": LOGIN_OK, "/shadow": FakeResponse(payload={})})
     config = Config(setpoint_c=28)
     client = ZodiacClient(
@@ -349,7 +354,7 @@ def test_turning_on_writes_state_mode_and_setpoint():
     client.turn_on(Mode.BOOST, config.setpoint_c)
     _, url, body, _ = session.calls[-1]
     assert "/devices/v1/S1/shadow" in url
-    assert body == {"state": {"desired": {"equipment": {"hp_0": {"state": 1, "st": 0, "tsp": 28}}}}}
+    assert body == {"state": {"desired": {"equipment": {"hp_0": {"state": 1, "st": 0, "tsp": 280}}}}}
 
 
 def test_turning_off_writes_only_the_power_field():
@@ -641,3 +646,68 @@ def test_commands_still_go_to_the_write_endpoint():
     )
     client.turn_off()
     assert "/devices/v1/S1/shadow" in session.calls[-1][1]
+
+
+# --- temperatures, as a real TD5 reports them -------------------------------------
+
+REAL_TD5 = {"state": {"reported": {"equipment": {"hp_0": {
+    "et": "HEAT_PUMP", "hs": "5 kW", "md": "TD5", "vr": "8.3.0",
+    "st": 0, "state": 0, "status": 0, "fan": 0, "tsp": 280,
+    "sns_1": {"state": "connected", "type": "water", "value": 246},
+    "sns_2": {"state": "connected", "type": "air", "value": 180},
+}}}}}
+
+
+def test_a_real_shadow_parses_into_degrees_not_tenths():
+    """tsp 280 is 28.0 C. Reading it as 280 would be nonsense; writing it, worse."""
+    state = parse_shadow(REAL_TD5, Config())
+    assert state.setpoint_c == 28.0
+    assert state.water_temp_c == 24.6
+    assert state.air_temp_c == 18.0
+    assert state.on is False
+
+
+def test_a_device_reporting_whole_degrees_is_left_alone():
+    shadow = {"state": {"reported": {"equipment": {"hp_0": {"tsp": 28}}}}}
+    assert parse_shadow(shadow, Config()).setpoint_c == 28.0
+
+
+def test_a_disconnected_sensor_reads_as_unknown_not_zero():
+    shadow = {"state": {"reported": {"equipment": {"hp_0": {
+        "sns_1": {"state": "disconnected", "type": "water", "value": 0},
+    }}}}}
+    assert parse_shadow(shadow, Config()).water_temp_c is None
+
+
+def test_a_written_setpoint_matches_the_units_the_device_reported():
+    """Writing 28 to a device expecting 280 would set the pool to 2.8 C."""
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": FakeResponse(payload=REAL_TD5),
+    })
+    config = Config(setpoint_c=28)
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        config, session=session,
+    )
+    client.read_state()
+    assert client.temperature_scale == 10
+
+    client.turn_on(Mode.BOOST, config.setpoint_c)
+    body = session.calls[-1][2]
+    assert body["state"]["desired"]["equipment"]["hp_0"]["tsp"] == 280
+
+
+def test_the_setpoint_scale_is_not_applied_to_a_whole_degree_device():
+    whole = {"state": {"reported": {"equipment": {"hp_0": {"tsp": 28, "state": 0}}}}}
+    session = FakeSession({
+        "/users/v1/login": LOGIN_OK,
+        "/devices/v1/S1/shadow": FakeResponse(payload=whole),
+    })
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    client.read_state()
+    client.turn_on(Mode.BOOST, 26)
+    assert session.calls[-1][2]["state"]["desired"]["equipment"]["hp_0"]["tsp"] == 26

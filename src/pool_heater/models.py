@@ -68,6 +68,7 @@ class HeaterState:
     mode: Mode | None = None
     status: int | None = None
     water_temp_c: float | None = None
+    air_temp_c: float | None = None
     setpoint_c: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 

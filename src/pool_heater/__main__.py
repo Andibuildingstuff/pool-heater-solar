@@ -166,6 +166,10 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     return 0
 
 
+def _degrees(value: float | None) -> str:
+    return "unknown" if value is None else f"{value:.1f} C"
+
+
 def _discover_sm_id(client: SolarManagerClient) -> int:
     """Print anything that looks like an SM ID, so it need not be hunted by hand."""
     print(
@@ -264,8 +268,9 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
     print(f"  powered on     {state.on}")
     print(f"  mode           {state.mode.value if state.mode else 'unrecognised'}")
     print(f"  status code    {state.status}")
-    print(f"  setpoint       {state.setpoint_c}")
-    print(f"  water temp     {state.water_temp_c}")
+    print(f"  setpoint       {_degrees(state.setpoint_c)}")
+    print(f"  water temp     {_degrees(state.water_temp_c)}")
+    print(f"  air temp       {_degrees(state.air_temp_c)}")
     print(
         "\n  mode map in use: "
         + ", ".join(f"{mode.value}={code}" for mode, code in config.mode_map.items())

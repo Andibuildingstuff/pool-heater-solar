@@ -52,9 +52,16 @@ SHADOW_READ_TEMPLATES = (
 )
 SHADOW_WRITE_TEMPLATE = "/devices/v1/{serial}/shadow"
 
-# The shadow does not document a water-temperature field consistently across
-# firmware versions, so we try the keys seen in the wild and fall back to none.
-WATER_TEMP_KEYS = ("wt", "water_temp", "temp", "current_temp", "ta")
+# Temperatures come back in tenths of a degree on this family: a real TD5 reports
+# tsp 280 for a 28.0 C setpoint and a water sensor value of 246 for 24.6 C. The
+# documented setpoint range is 8-32, so anything above this bound is tenths and
+# anything below it is already degrees. That keeps both conventions readable
+# without having to know the firmware in advance.
+TENTHS_ABOVE_C = 50.0
+
+# Sensors arrive as sns_1, sns_2, ... each tagged with what it measures rather
+# than named by position, so they are matched on `type` instead of key order.
+SENSOR_PREFIX = "sns_"
 
 
 class ZodiacError(RuntimeError):
@@ -87,6 +94,10 @@ class ZodiacClient:
         self._auth_token: str | None = None
         self._user_id: str | None = None
         self.shadow_path: str | None = None
+        # Tenths of a degree on every device seen so far; corrected from the
+        # shadow on the first read, since writing 28 to a device expecting 280
+        # would quietly set the pool to 2.8 C.
+        self.temperature_scale = 10
 
     # -- auth ------------------------------------------------------------------
 
@@ -244,12 +255,16 @@ class ZodiacClient:
     # -- high level ------------------------------------------------------------
 
     def read_state(self) -> HeaterState:
-        return parse_shadow(self.get_shadow(), self._config)
+        shadow = self.get_shadow()
+        raw_setpoint = _number_or_none(equipment_from_shadow(shadow).get("tsp"))
+        if raw_setpoint is not None:
+            self.temperature_scale = 10 if abs(raw_setpoint) > TENTHS_ABOVE_C else 1
+        return parse_shadow(shadow, self._config)
 
     def turn_on(self, mode: Mode, setpoint_c: float | None = None) -> None:
         fields: dict[str, Any] = {"state": 1, "st": self._config.mode_map[mode]}
         if setpoint_c is not None:
-            fields["tsp"] = int(round(setpoint_c))
+            fields["tsp"] = to_device_temperature(setpoint_c, self.temperature_scale)
         self.set_desired(fields)
 
     def turn_off(self) -> None:
@@ -296,8 +311,9 @@ def parse_shadow(shadow: dict[str, Any], config: Config) -> HeaterState:
         on=on,
         mode=_mode_from_code(_int_or_none(unit.get("st")), config),
         status=status,
-        water_temp_c=_first_number(unit, WATER_TEMP_KEYS),
-        setpoint_c=_number_or_none(unit.get("tsp")),
+        water_temp_c=sensor_c(unit, "water"),
+        air_temp_c=sensor_c(unit, "air"),
+        setpoint_c=temperature_c(unit.get("tsp")),
         raw=shadow,
     )
 
@@ -337,9 +353,27 @@ def _number_or_none(value: Any) -> float | None:
         return None
 
 
-def _first_number(unit: dict[str, Any], keys: tuple[str, ...]) -> float | None:
-    for key in keys:
-        value = _number_or_none(unit.get(key))
-        if value is not None:
-            return value
+def temperature_c(value: Any) -> float | None:
+    """Degrees Celsius from a shadow field that may be in tenths."""
+    number = _number_or_none(value)
+    if number is None:
+        return None
+    return number / 10.0 if abs(number) > TENTHS_ABOVE_C else number
+
+
+def sensor_c(unit: dict[str, Any], wanted: str) -> float | None:
+    """Read a connected sensor of the given type, in degrees Celsius."""
+    for key, value in unit.items():
+        if not key.startswith(SENSOR_PREFIX) or not isinstance(value, dict):
+            continue
+        if str(value.get("type", "")).lower() != wanted:
+            continue
+        if str(value.get("state", "connected")).lower() != "connected":
+            return None
+        return temperature_c(value.get("value"))
     return None
+
+
+def to_device_temperature(celsius: float, scale: int) -> int:
+    """Degrees Celsius back into whatever units the device reported in."""
+    return int(round(celsius * scale))

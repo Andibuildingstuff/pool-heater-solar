@@ -212,6 +212,13 @@ class Runner:
                 state.last_on_at = now
         state.device_on = heater.on
         state.device_mode = heater.mode.value if heater.mode else None
+        if heater.water_temp_c is not None:
+            LOGGER.info(
+                "heater %s | water %.1f C | setpoint %s",
+                "on" if heater.on else "off",
+                heater.water_temp_c,
+                "n/a" if heater.setpoint_c is None else f"{heater.setpoint_c:.1f} C",
+            )
 
     # -- acting ----------------------------------------------------------------
 

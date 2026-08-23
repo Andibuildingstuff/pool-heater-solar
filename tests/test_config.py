@@ -126,3 +126,22 @@ def test_an_untouched_repository_reads_as_not_configured():
 def test_a_half_filled_setup_reads_as_configured():
     """Some secrets present and others missing is a fault, not a fresh start."""
     assert Credentials(solar_api_key="k").any_configured() is True
+
+
+def test_a_start_threshold_below_the_heater_draw_is_rejected(monkeypatch):
+    """The invariant behind "it never takes power off the grid"."""
+    monkeypatch.setenv("ON_THRESHOLD", "1200")
+    monkeypatch.setenv("HEATER_DRAW_W", "1600")
+    with pytest.raises(ConfigError) as raised:
+        Config.from_env()
+    assert "import" in str(raised.value)
+
+
+def test_a_start_threshold_at_the_draw_is_allowed(monkeypatch):
+    monkeypatch.setenv("ON_THRESHOLD", "1600")
+    monkeypatch.setenv("HEATER_DRAW_W", "1600")
+    assert Config.from_env().on_threshold_w == 1600
+
+
+def test_the_default_threshold_leaves_room_above_the_default_draw():
+    assert Config().on_threshold_w >= Config().heater_draw_w

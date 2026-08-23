@@ -25,6 +25,13 @@ surplus = grid_export + battery_charging
 Grid export is hard surplus. Power going into the battery is soft surplus: it is
 available to the heater at the cost of charging the battery more slowly.
 
+**Using soft surplus never imports from the grid**, and that is not a hope — it
+follows from one comparison. If the battery is charging at 7 kW and the heater
+draws 2 kW, the battery charges at 5 kW instead; nothing is drawn from the grid.
+Import can only happen if the heater consumes more than the surplus that was
+there, so `ON_THRESHOLD` must stay at or above `HEATER_DRAW_W`. Configuring it
+lower is refused at startup rather than discovered on the meter.
+
 * **Start** when the surplus has held above `ON_THRESHOLD` for `ON_DELAY`.
 * **Stop** when the house is importing above `IMPORT_THRESHOLD`, or the battery
   is discharging above `DISCHARGE_THRESHOLD` while below `SOC_FLOOR`, for
@@ -134,7 +141,8 @@ and the default applies; the defaults live in one place, `src/pool_heater/config
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ON_THRESHOLD` | `3000` | W of surplus needed to start |
+| `ON_THRESHOLD` | `3000` | W of surplus needed to start; must be >= `HEATER_DRAW_W` |
+| `HEATER_DRAW_W` | `2000` | what the heater actually consumes; set from a measured Boost run |
 | `IMPORT_THRESHOLD` | `300` | W of grid import that counts as paying for it |
 | `DISCHARGE_THRESHOLD` | `500` | W of battery discharge that counts |
 | `SOC_FLOOR` | `90` | % below which discharge stops the heater |

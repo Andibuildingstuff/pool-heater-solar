@@ -182,6 +182,7 @@ class Config:
 
     # --- switching thresholds -------------------------------------------------
     on_threshold_w: float = 3000.0
+    heater_draw_w: float = 2000.0
     import_threshold_w: float = 300.0
     discharge_threshold_w: float = 500.0
     soc_floor_pct: float = 90.0
@@ -236,6 +237,18 @@ class Config:
     def validate(self) -> None:
         if self.on_threshold_w <= 0:
             raise ConfigError("ON_THRESHOLD must be positive")
+        if self.heater_draw_w <= 0:
+            raise ConfigError("HEATER_DRAW_W must be positive")
+        if self.on_threshold_w < self.heater_draw_w:
+            # Starting the heater on less surplus than it consumes pulls the
+            # difference from the grid. Taking power that was going into the
+            # battery never does that -- the battery just charges more slowly --
+            # so this one comparison is what keeps "never import" true.
+            raise ConfigError(
+                f"ON_THRESHOLD ({self.on_threshold_w:.0f} W) is below "
+                f"HEATER_DRAW_W ({self.heater_draw_w:.0f} W): starting on that "
+                "little surplus would import the difference from the grid"
+            )
         if self.min_samples < 1:
             raise ConfigError("MIN_SAMPLES must be at least 1")
         if self.min_off_min < 0:
@@ -257,6 +270,7 @@ class Config:
     def from_env(cls) -> "Config":
         config = cls(
             on_threshold_w=_float("ON_THRESHOLD", 3000.0),
+            heater_draw_w=_float("HEATER_DRAW_W", 2000.0),
             import_threshold_w=_float("IMPORT_THRESHOLD", 300.0),
             discharge_threshold_w=_float("DISCHARGE_THRESHOLD", 500.0),
             soc_floor_pct=_float("SOC_FLOOR", 90.0),

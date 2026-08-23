@@ -13,9 +13,10 @@ name: Pool heater
 
 on:
   schedule:
-    # Every five minutes. GitHub runs scheduled workflows on a best-effort
-    # basis and can delay them under load, which is why the control logic
-    # debounces on elapsed time as well as on sample count.
+    # Asking for every five minutes; GitHub has been delivering roughly one an
+    # hour on this repository. Rather than fight that, each run cycles
+    # internally for LOOP_MINUTES so the control logic still sees readings five
+    # minutes apart. The cron is the wake-up, not the clock.
     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
@@ -36,7 +37,7 @@ concurrency:
 jobs:
   cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     env:
       STATE_BRANCH: pool-heater-state
       STATE_PATH: state/pool-heater-state.json
@@ -77,6 +78,10 @@ jobs:
       SOLAR_MANAGER_CAR_DEVICE_ID: ${{ vars.SOLAR_MANAGER_CAR_DEVICE_ID }}
       SETPOINT_C: ${{ vars.SETPOINT_C }}
       RECONCILE_INTERVAL_MIN: ${{ vars.RECONCILE_INTERVAL_MIN }}
+      LOOP_MINUTES: ${{ vars.LOOP_MINUTES }}
+      HEATER_DRAW_W: ${{ vars.HEATER_DRAW_W }}
+      START_GRACE: ${{ vars.START_GRACE }}
+      MAX_FAILED_STARTS_PER_DAY: ${{ vars.MAX_FAILED_STARTS_PER_DAY }}
       OFF_SEASON_POLL_MIN: ${{ vars.OFF_SEASON_POLL_MIN }}
 
     steps:
@@ -101,15 +106,20 @@ jobs:
             echo "no $STATE_BRANCH branch yet; starting fresh"
           fi
 
-      - name: Run one cycle
+      - name: Run control cycles
         id: cycle
-        run: python -m pool_heater run --state "$STATE_PATH"
+        # One job, many cycles. Reusing the process across the hour also means a
+        # single iAquaLink login rather than one per cycle, which matters on an
+        # API that rate-limits.
+        run: python -m pool_heater loop --state "$STATE_PATH"
         env:
           PYTHONPATH: src
 
       - name: Save state
-        # Always: a failed cycle still advances the failure counters and the
-        # fail-safe flag, and losing that would re-alert on every run.
+        # Always, and at the end rather than per cycle: the loop keeps state in
+        # the local file as it goes and this publishes the result. A job killed
+        # mid-loop loses the readings since the last push, which costs a debounce
+        # streak and nothing more.
         if: always()
         env:
           GIT_AUTHOR_NAME: pool-heater-bot

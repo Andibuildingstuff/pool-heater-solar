@@ -16,10 +16,11 @@ import sys
 import time
 from datetime import datetime
 
+from . import control
 from .config import Config, ConfigError, Credentials
 from .models import Mode
 from .notify import Notifier
-from .runner import Runner
+from .runner import Runner, run_loop
 from .solar_manager import SolarManagerClient, SolarManagerError, id_fields
 from .state import StateStore
 from .zodiac import ZodiacClient, ZodiacError
@@ -47,6 +48,15 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     sub.add_parser("run", parents=[common], help="run one control cycle")
+
+    loop = sub.add_parser(
+        "loop", parents=[common],
+        help="run control cycles on an interval until the time budget is spent",
+    )
+    loop.add_argument("--minutes", type=float, default=None,
+                      help="how long to keep cycling (default LOOP_MINUTES)")
+    loop.add_argument("--interval", type=float, default=None,
+                      help="minutes between cycles (default CYCLE_INTERVAL_MIN)")
     sub.add_parser("show-state", parents=[common], help="print the persisted state as JSON")
     sub.add_parser("probe-solar", parents=[common], help="read Solar Manager and print what came back")
 
@@ -77,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "run":
         return _run(config, credentials, args.state)
+    if args.subcommand == "loop":
+        return _loop(config, credentials, args.state, args.minutes, args.interval)
     if args.subcommand == "show-state":
         print(json.dumps(StateStore(args.state).load().to_dict(), indent=2, sort_keys=True))
         return 0
@@ -117,6 +129,43 @@ def _run(config: Config, credentials: Credentials, state_path: str) -> int:
     )
     result = runner.run_once()
     return 0 if result.ok else 1
+
+
+def _loop(
+    config: Config,
+    credentials: Credentials,
+    state_path: str,
+    minutes: float | None,
+    interval: float | None,
+) -> int:
+    missing = credentials.missing_for_control()
+    if missing and not credentials.any_configured():
+        print("No credentials configured yet, so there is nothing to control.")
+        return 0
+    if missing:
+        print("missing credentials: " + ", ".join(missing), file=sys.stderr)
+        return 2
+
+    minutes = config.loop_minutes if minutes is None else minutes
+    interval = config.cycle_interval_min if interval is None else interval
+    log = logging.getLogger(__name__)
+
+    runner = Runner(config, credentials, StateStore(state_path))
+    if config.off_season_mode == "dormant" and not control.is_in_season(
+        runner.now().date(), config
+    ):
+        log.info("out of season and dormant; not looping")
+        return 0
+
+    log.info(
+        "looping for %.0f min, one cycle every %.0f min (%s)",
+        minutes, interval, "DRY RUN" if config.dry_run else "LIVE",
+    )
+    cycles, succeeded = run_loop(runner, minutes, interval)
+    log.info("%s of %s cycles completed without error", succeeded, cycles)
+    # Only a run where nothing worked is worth failing on: one bad reading in an
+    # hour is normal, an hour of nothing but bad readings is not.
+    return 0 if succeeded else 1
 
 
 def _probe_solar(config: Config, credentials: Credentials) -> int:

@@ -11,6 +11,7 @@ Designed around two cost asymmetries:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -404,3 +405,46 @@ class Runner:
 def _no_surplus(now: datetime) -> Reading:
     """A zeroed reading, for the paths where the decision cannot depend on power."""
     return Reading(taken_at=now)
+
+
+def run_loop(
+    runner: Runner,
+    minutes: float,
+    interval_min: float,
+    sleeper=time.sleep,
+    clock=time.monotonic,
+) -> tuple[int, int]:
+    """Run cycles at a fixed interval for a fixed span. Returns (cycles, ok).
+
+    GitHub honours a five-minute cron on this repository about once an hour, and
+    the control logic needs samples closer together than that: a debounce streak
+    resets after MAX_SAMPLE_GAP_MIN, so hourly readings would never accumulate
+    into a decision. One job that ticks internally gives real five-minute
+    resolution from whatever the scheduler chooses to deliver.
+
+    A failing cycle does not end the loop -- an hour of missed control because of
+    one bad reading is a worse outcome than the reading itself.
+
+    The clock and the sleeper are injected so this is testable without waiting.
+    """
+    deadline = clock() + minutes * 60
+    cycles = succeeded = 0
+
+    while True:
+        started = clock()
+        cycles += 1
+        try:
+            if runner.run_once().ok:
+                succeeded += 1
+        except Exception:  # noqa: BLE001 - the loop must outlive one bad cycle
+            LOGGER.exception("cycle %s failed; continuing", cycles)
+
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        # Sleep to the next tick rather than for a fixed period, so a slow cycle
+        # does not push every later one out of step.
+        elapsed = clock() - started
+        sleeper(max(0.0, min(interval_min * 60 - elapsed, remaining)))
+
+    return cycles, succeeded

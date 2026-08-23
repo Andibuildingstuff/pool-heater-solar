@@ -216,6 +216,7 @@ class Config:
 
     # --- cadence --------------------------------------------------------------
     cycle_interval_min: float = 5.0
+    loop_minutes: float = 50.0
     max_sample_gap_min: float = 15.0
     reconcile_interval_min: float = 30.0
     off_season_poll_min: float = 60.0
@@ -294,6 +295,7 @@ class Config:
             car_priority_margin_w=_float("CAR_PRIORITY_MARGIN_W", 1000.0),
             setpoint_c=(_float("SETPOINT_C", -1.0) if _env("SETPOINT_C") else None),
             cycle_interval_min=_float("CYCLE_INTERVAL_MIN", 5.0),
+            loop_minutes=_float("LOOP_MINUTES", 50.0),
             max_sample_gap_min=_float("MAX_SAMPLE_GAP_MIN", 15.0),
             reconcile_interval_min=_float("RECONCILE_INTERVAL_MIN", 30.0),
             off_season_poll_min=_float("OFF_SEASON_POLL_MIN", 60.0),

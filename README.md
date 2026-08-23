@@ -149,6 +149,7 @@ and the default applies; the defaults live in one place, `src/pool_heater/config
 | `ON_DELAY` / `OFF_DELAY` | `10` | minutes the condition must hold |
 | `MIN_RUN` / `MIN_OFF` | `30` | minutes minimum run and minimum rest |
 | `START_GRACE` | `10` | minutes before a start is checked; the unit stages up slowly |
+| `LOOP_MINUTES` | `50` | how long each scheduled run keeps cycling internally |
 | `MAX_FAILED_STARTS_PER_DAY` | `2` | failed starts that refund their switching cycle |
 | `MAX_SWITCHES_PER_DAY` | `3` | starts per day |
 | `HARD_OFF_START` / `HARD_OFF_END` | `20:00` / `10:00` | the run window |
@@ -231,10 +232,22 @@ the hourly out-of-hours check — roughly 35 reads a day rather than 288. If a
 command and the device's own state ever disagree, the device wins and the
 disagreement is logged.
 
-**GitHub's cron is approximate.** Scheduled runs can be delayed several minutes
-under load. The debounce therefore counts elapsed time as well as samples, so a
-burst of bunched-up runs cannot pass for ten minutes of steady surplus, and a
-long gap resets the streak rather than pretending the condition held through it.
+**GitHub's cron is not a clock.** This repository asks for every five minutes
+and gets roughly one run an hour, with occasional gaps of several hours
+overnight. That is not a delay to tolerate, it is fatal to the control logic: a
+debounce streak resets after `MAX_SAMPLE_GAP_MIN`, so hourly readings never
+accumulate into a decision and the heater would never start.
+
+So the cron is the wake-up and not the clock. Each run cycles internally every
+`CYCLE_INTERVAL_MIN` for `LOOP_MINUTES`, giving real five-minute resolution from
+whatever the scheduler chooses to deliver. Reusing one process across the hour
+also means a single iAquaLink login rather than a dozen, which matters on an API
+that rate-limits.
+
+State is written to the local file every cycle and pushed to the state branch
+when the job ends. A job killed mid-loop loses the readings since the last push,
+which costs a debounce streak and nothing else.
+
 Note also that GitHub disables scheduled workflows in a repository with no
 activity for 60 days, and emails you when it does.
 

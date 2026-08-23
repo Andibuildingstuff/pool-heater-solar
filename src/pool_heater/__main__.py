@@ -217,7 +217,12 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
         except ZodiacError as exc:
             print(f"could not list devices: {exc}", file=sys.stderr)
             return 1
-        print("\n--- devices on the account: set ZODIAC_SERIAL to the heat pump's serial ---")
+        print(
+            "\nZODIAC_SERIAL is NOT SET, so this is listing the account's devices\n"
+            "rather than reading the heat pump. Set it and run this again to see\n"
+            "the heater's actual state, mode and water temperature.\n"
+            "\n--- devices on the account ---"
+        )
         for device in devices:
             # Names are withheld. People name their equipment after the house or
             # the street, and workflow logs on a public repository are public.

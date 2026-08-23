@@ -80,9 +80,16 @@ until 30 June 2027 and this project supports either. Emailing
 heat pump's serial number — leave `ZODIAC_SERIAL` unset and run the probe below,
 and it will list the devices on your account.
 
-**Telegram.** Message [@BotFather](https://t.me/botfather), send `/newbot`, and
-keep the token. Then message your new bot once and open
-`https://api.telegram.org/bot<TOKEN>/getUpdates` to find your numeric chat id.
+**Notifications need no setup.** Inside GitHub Actions the automation keeps a
+logbook: one issue per season, with a comment for every switch-on, switch-off
+and problem. GitHub emails you each comment, and the thread is a searchable
+history of every decision. Closing the issue is harmless — a new one opens on
+the next event.
+
+If you would rather have a push notification, set `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` instead (create a bot via [@BotFather](https://t.me/botfather));
+Telegram takes precedence when configured. With neither channel available,
+notifications go to the run log.
 
 ### 2. Repository secrets
 
@@ -94,7 +101,7 @@ keep the token. Then message your new bot once and open
 | `SOLAR_MANAGER_EMAIL`, `SOLAR_MANAGER_PASSWORD` | only without an API key |
 | `SOLAR_MANAGER_SM_ID` | yes |
 | `ZODIAC_EMAIL`, `ZODIAC_PASSWORD`, `ZODIAC_SERIAL` | yes |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | for notifications |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | optional; only if you prefer Telegram over the logbook issue |
 
 ### 3. Prove the two APIs work
 

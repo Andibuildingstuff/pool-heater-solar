@@ -18,7 +18,7 @@ from datetime import datetime
 from . import control
 from .config import Config, Credentials
 from .models import Action, Decision, HeaterState, Mode, Reading
-from .notify import Notifier
+from .notify import build_notifier
 from .solar_manager import SolarManagerClient, SolarManagerError
 from .state import State, StateStore
 from .zodiac import ZodiacClient, ZodiacError, ZodiacRateLimited
@@ -76,7 +76,7 @@ class Runner:
         store: StateStore,
         solar: SolarManagerClient | None = None,
         zodiac: ZodiacClient | None = None,
-        notifier: Notifier | None = None,
+        notifier=None,
         now: datetime | None = None,
     ):
         self.config = config
@@ -84,7 +84,7 @@ class Runner:
         self.store = store
         self.solar = solar or SolarManagerClient(credentials, config)
         self.zodiac = zodiac or ZodiacClient(credentials, config)
-        self.notifier = notifier or Notifier(credentials)
+        self.notifier = notifier or build_notifier(credentials)
         self._now = now
 
     def now(self) -> datetime:

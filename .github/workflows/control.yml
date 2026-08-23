@@ -28,6 +28,8 @@ on:
 
 permissions:
   contents: write
+  # The notifier keeps a logbook issue and comments on it for each switch.
+  issues: write
 
 concurrency:
   # Never let two cycles interleave: they would race on the state branch.
@@ -52,6 +54,8 @@ jobs:
       ZODIAC_SERIAL: ${{ secrets.ZODIAC_SERIAL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # For the logbook issue. GITHUB_REPOSITORY is provided by Actions itself.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- tunables (unset = the documented default) -------------------------
       DRY_RUN: ${{ inputs.mode == 'live' && 'false' || (inputs.mode == 'dry-run' && 'true' || vars.DRY_RUN) }}

@@ -195,6 +195,8 @@ class Config:
 
     # --- safety rails ---------------------------------------------------------
     max_switches_per_day: int = 3
+    start_grace_min: float = 10.0
+    max_failed_starts_per_day: int = 2
     hard_off_start: time = time(20, 0)
     hard_off_end: time = time(10, 0)
 
@@ -264,6 +266,8 @@ class Config:
             min_off_min=_float("MIN_OFF", 30.0),
             min_samples=_int("MIN_SAMPLES", 2),
             max_switches_per_day=_int("MAX_SWITCHES_PER_DAY", 3),
+            start_grace_min=_float("START_GRACE", 10.0),
+            max_failed_starts_per_day=_int("MAX_FAILED_STARTS_PER_DAY", 2),
             hard_off_start=parse_clock(_env("HARD_OFF_START", "20:00"), "HARD_OFF_START"),
             hard_off_end=parse_clock(_env("HARD_OFF_END", "10:00"), "HARD_OFF_END"),
             season_start=parse_day(_env("SEASON_START", "01 May"), "SEASON_START"),

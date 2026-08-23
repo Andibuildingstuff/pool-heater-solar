@@ -403,3 +403,97 @@ def test_a_hand_started_heater_still_gets_its_compressor_minimum(store):
     assert result.decision.action is Action.NONE
     assert "compressor minimum" in result.decision.reason
     assert zodiac.calls == []
+
+
+# --- did the start actually take? ---------------------------------------------------
+
+
+def running(status=2):
+    return HeaterState(on=True, mode=Mode.BOOST, status=status)
+
+
+def commanded_on(now=NOON, minutes_ago=12, ons_today=1):
+    state = primed(now, on=True, ons_today=ons_today)
+    state.last_on_at = now - timedelta(minutes=minutes_ago)
+    state.start_verified = False
+    state.last_shadow_at = now - timedelta(minutes=minutes_ago)
+    return state
+
+
+def test_a_start_that_took_is_confirmed_and_not_rechecked(store):
+    zodiac = FakeZodiac(running())
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=commanded_on())
+    runner.run_once()
+
+    saved = store.load()
+    assert saved.start_verified is True
+    assert saved.commanded_on is True
+    assert zodiac.calls == []
+
+
+def test_a_heater_switched_on_but_not_running_is_switched_off_and_alerted(store):
+    """state 1 with status 0: told to run, heating nothing. Usually no water flow."""
+    zodiac = FakeZodiac(HeaterState(on=True, mode=Mode.BOOST, status=0))
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=commanded_on())
+    result = runner.run_once()
+
+    assert result.decision.action is Action.TURN_OFF
+    assert zodiac.calls == [("off",)]
+    assert "filter pump" in result.decision.reason
+    assert any("failed to start" in m or "not running" in m for m in runner.notifier.messages)
+
+
+def test_a_failed_start_refunds_the_switching_cycle(store):
+    """A pump that starts later should not find the budget already spent."""
+    zodiac = FakeZodiac(HeaterState(on=True, status=0))
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac,
+                   seeded=commanded_on(ons_today=1))
+    runner.run_once()
+
+    saved = store.load()
+    assert saved.switch_ons_today == 0
+    assert saved.failed_starts_today == 1
+
+
+def test_repeated_failed_starts_stop_being_refunded(store):
+    """A real fault must not retry all afternoon."""
+    state = commanded_on(ons_today=2)
+    state.failed_starts_today = 2
+    zodiac = FakeZodiac(HeaterState(on=True, status=0))
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
+    runner.run_once()
+
+    saved = store.load()
+    assert saved.failed_starts_today == 3
+    assert saved.switch_ons_today == 2, "the third failure keeps its cycle"
+
+
+def test_the_check_waits_for_the_grace_period(store):
+    """A heat pump stages up over minutes; checking at once would always fail."""
+    zodiac = FakeZodiac(HeaterState(on=True, status=0))
+    state = commanded_on(minutes_ago=3)
+    state.last_shadow_at = NOON
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
+    runner.run_once()
+
+    assert zodiac.calls == [], "too early to judge"
+    assert store.load().start_verified is False
+
+
+def test_a_verified_start_is_not_re_verified_every_cycle(store):
+    state = commanded_on()
+    state.start_verified = True
+    state.last_shadow_at = NOON
+    zodiac = FakeZodiac(running())
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
+    runner.run_once()
+    assert zodiac.reads == 0
+
+
+def test_a_fresh_start_clears_the_previous_verification(store):
+    state = primed()
+    state.start_verified = True
+    runner = build(store, seeded=state)
+    runner.run_once()
+    saved = store.load()
+    assert saved.commanded_on is True and saved.start_verified is False

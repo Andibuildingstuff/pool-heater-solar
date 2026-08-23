@@ -72,6 +72,16 @@ class HeaterState:
     setpoint_c: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
+    @property
+    def running(self) -> bool:
+        """On *and* doing something.
+
+        `state` is the switch; `status` is what the unit is actually doing (0 off,
+        1 holding temperature, 2 heating). A unit told to run with no water flow
+        sits at state 1, status 0 -- switched on, heating nothing.
+        """
+        return self.on and (self.status is None or self.status > 0)
+
 
 @dataclass(frozen=True)
 class Decision:

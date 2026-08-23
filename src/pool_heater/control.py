@@ -313,6 +313,32 @@ def _modulation(reading: Reading, heater: HeaterState, config: Config) -> Decisi
     return None
 
 
+def start_check_due(now: datetime, state: State, config: Config) -> bool:
+    """Is it time to confirm that a start we commanded actually took?"""
+    if not state.commanded_on or state.start_verified or state.last_on_at is None:
+        return False
+    elapsed_min = (now - state.last_on_at).total_seconds() / 60.0
+    return elapsed_min >= config.start_grace_min
+
+
+def failed_to_start(state: State, config: Config) -> Decision:
+    """The heater was told to run and, given time, reports that it is not.
+
+    The usual cause is no water flow: a pool heat pump will not start unless the
+    filter pump is circulating, and that pump is outside this project's control.
+    Switching off rather than leaving it commanded-on keeps the record honest --
+    and refunding the cycle means a pump that starts later in the day still gets
+    used, up to a limit, so a persistent fault cannot retry all afternoon.
+    """
+    return Decision(
+        Action.TURN_OFF,
+        f"commanded on {config.start_grace_min:.0f} min ago but the unit reports "
+        "it is not running -- check the filter pump is circulating",
+        notify=True,
+        warnings=("heater failed to start; switching off",),
+    )
+
+
 def failsafe_decision(state: State, error: str) -> Decision:
     """What to do when a reading or the heater could not be reached.
 

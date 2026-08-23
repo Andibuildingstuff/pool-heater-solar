@@ -170,6 +170,14 @@ class Runner:
 
         control.update_streaks(state, now, reading, self.config)
 
+        # A start that never took is worse than no start: the heater sits
+        # commanded-on, MIN_RUN holds it there, and a switching cycle is spent on
+        # nothing. Confirm with the device once the grace period is up.
+        if control.start_check_due(now, state, self.config):
+            verdict = self._verify_start(now, state)
+            if verdict is not None:
+                return verdict
+
         heater = believed
         fresh = False
         if should_reconcile(state, now, self.config):
@@ -194,6 +202,34 @@ class Runner:
             decision = control.decide(now, reading, heater, state, self.config)
 
         return self._apply(now, state, decision, reading, heater)
+
+    def _verify_start(self, now: datetime, state: State) -> CycleResult | None:
+        """Check a commanded start actually took. None means carry on as normal."""
+        try:
+            heater = self.zodiac.read_state()
+        except ZodiacError as exc:
+            return self._handle_error(now, state, f"iAquaLink: {exc}")
+
+        state.last_shadow_at = now
+        state.device_on = heater.on
+        if heater.running:
+            LOGGER.info("start confirmed: the unit reports it is running")
+            state.start_verified = True
+            return None
+
+        decision = control.failed_to_start(state, self.config)
+        state.failed_starts_today += 1
+        # Refund the cycle so a filter pump that starts later in the day can
+        # still be used -- but only so many times, or a real fault would retry
+        # every debounce period until dark.
+        if state.failed_starts_today <= self.config.max_failed_starts_per_day:
+            state.switch_ons_today = max(0, state.switch_ons_today - 1)
+        else:
+            LOGGER.warning(
+                "%s failed starts today; no longer refunding the switching budget",
+                state.failed_starts_today,
+            )
+        return self._apply(now, state, decision, None, heater)
 
     def _note_shadow(
         self, state: State, now: datetime, heater: HeaterState, believed: HeaterState

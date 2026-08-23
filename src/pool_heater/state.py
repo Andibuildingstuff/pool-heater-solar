@@ -56,6 +56,10 @@ class State:
     # Daily switch budget, reset on the local calendar day.
     budget_day: str | None = None
     switch_ons_today: int = 0
+    failed_starts_today: int = 0
+
+    # Set once the device confirms it is actually running after a start.
+    start_verified: bool = False
 
     # What the heater itself last reported, and when we last asked.
     device_on: bool | None = None
@@ -133,6 +137,7 @@ class State:
         if self.budget_day != key:
             self.budget_day = key
             self.switch_ons_today = 0
+            self.failed_starts_today = 0
 
     def record_on(self, now: datetime, mode: str | None) -> None:
         self.commanded_on = True
@@ -141,6 +146,7 @@ class State:
         self.device_on = True
         self.device_mode = mode
         self.switch_ons_today += 1
+        self.start_verified = False
         self.clear_streaks()
 
     def record_off(self, now: datetime) -> None:
@@ -148,6 +154,7 @@ class State:
         self.commanded_mode = None
         self.last_off_at = now
         self.device_on = False
+        self.start_verified = False
         self.clear_streaks()
 
 

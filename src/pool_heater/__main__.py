@@ -170,8 +170,11 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     return 0
 
 
-# Long enough for the cloud to push a desired state to the unit and hear back.
-COMMAND_SETTLE_S = 8
+# A heat pump stages up over minutes: it checks flow and eases the compressor in
+# before it reports itself running. Waiting a fixed few seconds and reading once
+# reported a working power-on as a failure, so the probe polls instead.
+COMMAND_POLL_EVERY_S = 15
+COMMAND_POLL_LIMIT_S = 180
 
 # The fields worth watching after a command. The shadow also carries counters and
 # timers that change on their own, which would bury the answer in noise.
@@ -195,6 +198,24 @@ def _report_change(before: dict, after: dict) -> None:
         return
     for key, was, now in changes:
         print(f"  {key}: {was} -> {now}")
+
+
+def _wait_for_change(client: ZodiacClient, before: dict) -> dict:
+    """Poll the shadow until a watched field moves, or the time runs out."""
+    from .zodiac import equipment_from_shadow
+
+    waited = 0
+    shadow = client.get_shadow()
+    while waited < COMMAND_POLL_LIMIT_S:
+        after = equipment_from_shadow(shadow)
+        if any(before.get(key) != after.get(key) for key in WATCHED_FIELDS):
+            print(f"  device reported a change after {waited}s")
+            return shadow
+        time.sleep(COMMAND_POLL_EVERY_S)
+        waited += COMMAND_POLL_EVERY_S
+        shadow = client.get_shadow()
+    print(f"  no change after {COMMAND_POLL_LIMIT_S}s")
+    return shadow
 
 
 def _truthy_state(reported: dict) -> bool:
@@ -291,16 +312,18 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
         except ZodiacError as exc:
             print(f"command {command!r} failed: {exc}", file=sys.stderr)
             return 1
-        # The write sets `desired`; the device then reports back. Give it a
-        # moment, or a command that worked looks like one that did nothing.
-        print(f"sent {command!r}, waiting {COMMAND_SETTLE_S}s for the device to report back")
-        time.sleep(COMMAND_SETTLE_S)
-
-    try:
-        shadow = client.get_shadow()
-    except ZodiacError as exc:
-        print(f"shadow read failed: {exc}", file=sys.stderr)
-        return 1
+        print(f"sent {command!r}, watching for up to {COMMAND_POLL_LIMIT_S}s")
+        try:
+            shadow = _wait_for_change(client, before)
+        except ZodiacError as exc:
+            print(f"shadow read failed: {exc}", file=sys.stderr)
+            return 1
+    else:
+        try:
+            shadow = client.get_shadow()
+        except ZodiacError as exc:
+            print(f"shadow read failed: {exc}", file=sys.stderr)
+            return 1
 
     if before is not None:
         _report_change(before, equipment_from_shadow(shadow))

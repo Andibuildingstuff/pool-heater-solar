@@ -38,6 +38,7 @@ On top of that sit rails that no reading can talk it out of:
 | Hard-off window | Never runs between `HARD_OFF_START` and `HARD_OFF_END` |
 | Switching budget | At most `MAX_SWITCHES_PER_DAY` starts; the closing OFF is always allowed |
 | Compressor minimum | No run shorter than `MIN_RUN`, no restart within `MIN_OFF` |
+| Start verification | A start that does not take is switched off and alerted, not left commanded-on |
 | Fail-safe | If either API is unreachable, send OFF once and alert |
 | Car priority | While the Easee pulls over `CAR_ACTIVE_W`, the start threshold rises |
 
@@ -139,6 +140,8 @@ and the default applies; the defaults live in one place, `src/pool_heater/config
 | `SOC_FLOOR` | `90` | % below which discharge stops the heater |
 | `ON_DELAY` / `OFF_DELAY` | `10` | minutes the condition must hold |
 | `MIN_RUN` / `MIN_OFF` | `30` | minutes minimum run and minimum rest |
+| `START_GRACE` | `10` | minutes before a start is checked; the unit stages up slowly |
+| `MAX_FAILED_STARTS_PER_DAY` | `2` | failed starts that refund their switching cycle |
 | `MAX_SWITCHES_PER_DAY` | `3` | starts per day |
 | `HARD_OFF_START` / `HARD_OFF_END` | `20:00` / `10:00` | the run window |
 | `SEASON_START` / `SEASON_END` | `01 May` / `30 Sep` | inclusive |
@@ -255,11 +258,20 @@ Devices come back with readable types — `Inverter`, `Smart Meter`, `Battery`,
 `Car Charging` — and the charger is found by type without needing
 `SOLAR_MANAGER_CAR_DEVICE_ID` set.
 
-*Still unverified.* Everything on the iAquaLink side: login, the shadow read, the
-`st` mode codes, and whether a written command actually reaches the heat pump.
-That is what `probe-zodiac` is for, and it is the last thing standing between a
-dry run and live control.
+iAquaLink is verified too, against a TD5 running firmware 8.3.0. Login works;
+the shadow reads from `/devices/v1/…` (v2 answers "missing signature"); and both
+power commands take effect — a power-on was seen reaching `status 2`, the unit's
+own code for actively heating, and a power-off returned it to `status 0`.
 
-*Assumed.* `ON_THRESHOLD = 3000 W` is a guess at the heater's electrical draw.
-The first Boost run is what settles it: watch consumption jump in Solar Manager
-and set the threshold a little above the step.
+The unit stages up over **minutes**, not seconds. It reports `state 1, status 0`
+with a changing `reason` while it checks flow and eases the compressor in, which
+is why nothing here judges a start until `START_GRACE` has passed.
+
+*Still unverified.* The `st` code for Smart mode. Boost is 0 and EcoSilence is 1;
+2 is a guess that only matters with `ECOSILENCE_ENABLED` turned on.
+
+*Assumed.* `ON_THRESHOLD = 3000 W`. The shadow reports the unit as "5 kW", and a
+reading taken while it was heating suggests an electrical draw nearer 1.5–2 kW —
+so the default likely demands far more surplus than the heater needs. Watch the
+consumption step in Solar Manager during a Boost run and set the threshold just
+above it.

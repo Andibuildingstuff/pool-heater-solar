@@ -13,7 +13,7 @@ from pool_heater.models import Action, HeaterState, Mode
 from pool_heater.runner import Runner
 from pool_heater.solar_manager import SolarManagerError
 from pool_heater.state import State, StateStore
-from pool_heater.zodiac import ZodiacError
+from pool_heater.zodiac import ZodiacError, ZodiacRateLimited
 
 CREDENTIALS = Credentials(
     solar_api_key="k", solar_sm_id="sm1",
@@ -497,3 +497,47 @@ def test_a_fresh_start_clears_the_previous_verification(store):
     runner.run_once()
     saved = store.load()
     assert saved.commanded_on is True and saved.start_verified is False
+
+
+# --- rate limiting is not an outage --------------------------------------------------
+
+
+class RateLimitedZodiac(FakeZodiac):
+    def read_state(self):
+        self.reads += 1
+        raise ZodiacRateLimited("iAquaLink rate-limited the shadow read")
+
+
+def test_rate_limiting_skips_the_cycle_rather_than_failing_safe(store):
+    """A 429 says the cloud is fine and busy, not that the heater is unreachable."""
+    state = commanded_on()
+    zodiac = RateLimitedZodiac(running())
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
+    result = runner.run_once()
+
+    assert result.skipped is True
+    assert result.ok is True, "a throttled read must not fail the run"
+    assert zodiac.calls == [], "switching off would be another call to the same API"
+    assert runner.notifier.messages == []
+
+
+def test_rate_limiting_leaves_the_commanded_state_untouched(store):
+    state = commanded_on()
+    runner = build(
+        store, solar=FakeSolar(surplus(6000)), zodiac=RateLimitedZodiac(), seeded=state
+    )
+    runner.run_once()
+
+    saved = store.load()
+    assert saved.commanded_on is True
+    assert saved.start_verified is False
+    assert saved.consecutive_failures == 0
+
+
+def test_a_genuine_outage_still_fails_safe(store):
+    """The distinction matters: unreachable is not the same as throttled."""
+    state = primed(on=True)
+    zodiac = FakeZodiac(HeaterState(on=True), error="connection reset")
+    runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
+    result = runner.run_once()
+    assert result.ok is False

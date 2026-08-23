@@ -20,7 +20,7 @@ from .models import Action, Decision, HeaterState, Mode, Reading
 from .notify import Notifier
 from .solar_manager import SolarManagerClient, SolarManagerError
 from .state import State, StateStore
-from .zodiac import ZodiacClient, ZodiacError
+from .zodiac import ZodiacClient, ZodiacError, ZodiacRateLimited
 
 LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +145,8 @@ class Runner:
                 state.last_off_season_check_at = now
                 state.device_on = heater.on
                 state.device_mode = heater.mode.value if heater.mode else None
+            except ZodiacRateLimited as exc:
+                return self._back_off(state, exc)
             except ZodiacError as exc:
                 return self._handle_error(now, state, f"iAquaLink: {exc}")
 
@@ -185,6 +187,8 @@ class Runner:
                 heater = self.zodiac.read_state()
                 fresh = True
                 self._note_shadow(state, now, heater, believed)
+            except ZodiacRateLimited as exc:
+                return self._back_off(state, exc)
             except ZodiacError as exc:
                 return self._handle_error(now, state, f"iAquaLink: {exc}")
 
@@ -197,6 +201,8 @@ class Runner:
             try:
                 heater = self.zodiac.read_state()
                 self._note_shadow(state, now, heater, believed)
+            except ZodiacRateLimited as exc:
+                return self._back_off(state, exc)
             except ZodiacError as exc:
                 return self._handle_error(now, state, f"iAquaLink: {exc}")
             decision = control.decide(now, reading, heater, state, self.config)
@@ -207,6 +213,8 @@ class Runner:
         """Check a commanded start actually took. None means carry on as normal."""
         try:
             heater = self.zodiac.read_state()
+        except ZodiacRateLimited as exc:
+            return self._back_off(state, exc)
         except ZodiacError as exc:
             return self._handle_error(now, state, f"iAquaLink: {exc}")
 
@@ -323,6 +331,22 @@ class Runner:
             f"\nsurplus {reading.surplus_w:.0f} W (export {reading.grid_export_w:.0f}"
             f" + battery {reading.battery_charge_w:.0f}), PV {reading.pv_w:.0f} W"
             f"\nstarts today: {state.switch_ons_today}/{self.config.max_switches_per_day}"
+        )
+
+    def _back_off(self, state: State, exc: ZodiacRateLimited) -> CycleResult:
+        """Rate limiting is not news about the heater, so do not act on it.
+
+        The fail-safe exists for "we cannot see the house or the heater, so stop
+        heating". A 429 means the opposite -- the cloud is fine and is asking us
+        to ask less often. Treating it as an outage would switch off a perfectly
+        good run, and switching off is itself another call to the same throttled
+        API. The cycle is skipped, the state is left alone, and the next one
+        picks up where this left off.
+        """
+        LOGGER.warning("backing off: %s", exc)
+        state.consecutive_failures = 0
+        return CycleResult(
+            Decision(Action.NONE, f"skipped this cycle: {exc}"), skipped=True
         )
 
     # -- failure ---------------------------------------------------------------

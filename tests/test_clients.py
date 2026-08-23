@@ -25,6 +25,8 @@ from pool_heater.zodiac import (
     ZodiacClient,
     ZodiacError,
     ZodiacRateLimited,
+    desired_from_shadow,
+    equipment_from_shadow,
     parse_shadow,
 )
 
@@ -739,8 +741,6 @@ def test_turning_on_sets_the_power_switch_as_well_as_the_mode():
 
 def test_the_desired_block_is_read_separately_from_the_reported_one():
     """The app shows desired. Only reported says what the hardware is doing."""
-    from pool_heater.zodiac import desired_from_shadow
-
     shadow = {"state": {
         "desired": {"equipment": {"hp_0": {"state": 1, "st": 0}}},
         "reported": {"equipment": {"hp_0": {"state": 0, "status": 0, "reason": 6}}},
@@ -750,8 +750,6 @@ def test_the_desired_block_is_read_separately_from_the_reported_one():
 
 
 def test_a_shadow_with_no_desired_block_reads_as_empty_not_as_reported():
-    from pool_heater.zodiac import desired_from_shadow
-
     assert desired_from_shadow(REAL_TD5) == {}
 
 

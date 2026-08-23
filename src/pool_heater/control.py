@@ -77,7 +77,15 @@ def surplus_holding(reading: Reading, config: Config) -> bool:
 
 
 def off_condition(reading: Reading, config: Config) -> tuple[bool, str]:
-    """Is the house paying for the heater? Returns (yes/no, why)."""
+    """Is the house paying for the heater? Returns (yes/no, why).
+
+    IMPORT_THRESHOLD is a deadband, not a zero. A house with solar draws a small
+    amount from the grid continuously -- inverter and gateway standby, perhaps
+    50-100 W -- which is present whether or not the heater is running and is not
+    worth reacting to. The threshold sits above that floor so what triggers a
+    stop is genuine import the heater caused, sustained for OFF_DELAY, rather
+    than a passing cloud or the system's own overhead.
+    """
     if reading.grid_import_w > config.import_threshold_w:
         return True, f"importing {reading.grid_import_w:.0f} W from the grid"
     draining = reading.battery_discharge_w > config.discharge_threshold_w

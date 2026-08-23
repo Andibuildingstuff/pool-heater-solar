@@ -143,7 +143,7 @@ and the default applies; the defaults live in one place, `src/pool_heater/config
 |---|---|---|
 | `ON_THRESHOLD` | `3000` | W of surplus needed to start; must be >= `HEATER_DRAW_W` |
 | `HEATER_DRAW_W` | `2000` | what the heater actually consumes; set from a measured Boost run |
-| `IMPORT_THRESHOLD` | `300` | W of grid import that counts as paying for it |
+| `IMPORT_THRESHOLD` | `300` | W of grid import that counts as paying for it. A deadband, not a zero: a solar house draws 50-100 W continuously for its own electronics, and that floor is present with or without the heater |
 | `DISCHARGE_THRESHOLD` | `500` | W of battery discharge that counts |
 | `SOC_FLOOR` | `90` | % below which discharge stops the heater |
 | `ON_DELAY` / `OFF_DELAY` | `10` | minutes the condition must hold |

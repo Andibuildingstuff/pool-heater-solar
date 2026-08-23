@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 
 from .config import Config, ConfigError, Credentials
@@ -54,8 +55,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     zodiac.add_argument(
         "--send",
-        choices=["on", "off", "boost", "ecosilence", "smart"],
-        help="send a real command to the heater to confirm the app reflects it",
+        choices=["on", "off", "mode-boost", "mode-ecosilence", "mode-smart"],
+        help=(
+            "send a real command. 'on'/'off' are the power switch; the mode-* "
+            "options only change which mode it runs in, not whether it runs"
+        ),
     )
     return parser
 
@@ -166,6 +170,31 @@ def _probe_solar(config: Config, credentials: Credentials) -> int:
     return 0
 
 
+# Long enough for the cloud to push a desired state to the unit and hear back.
+COMMAND_SETTLE_S = 8
+
+# The fields worth watching after a command. The shadow also carries counters and
+# timers that change on their own, which would bury the answer in noise.
+WATCHED_FIELDS = ("state", "st", "tsp", "status", "fan")
+
+
+def _report_change(before: dict, after: dict) -> None:
+    """Say plainly whether the command moved anything."""
+    changes = [
+        (key, before.get(key), after.get(key))
+        for key in WATCHED_FIELDS
+        if before.get(key) != after.get(key)
+    ]
+    print("\n--- what the command changed ---")
+    if not changes:
+        print("  NOTHING CHANGED. The device reports the same state as before.")
+        print("  If you expected the heater to start, note that a mode command sets")
+        print("  which mode it runs in, not whether it runs -- use 'on' for that.")
+        return
+    for key, was, now in changes:
+        print(f"  {key}: {was} -> {now}")
+
+
 def _degrees(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.1f} C"
 
@@ -238,18 +267,25 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
         print("\n  (device names are not shown: they often give away an address)")
         return 0
 
+    from .zodiac import equipment_from_shadow, parse_shadow
+
+    before = None
     if command:
         try:
+            before = equipment_from_shadow(client.get_shadow())
             if command == "on":
                 client.turn_on(config.on_mode, config.setpoint_c)
             elif command == "off":
                 client.turn_off()
             else:
-                client.set_mode(Mode(command))
+                client.set_mode(Mode(command.removeprefix("mode-")))
         except ZodiacError as exc:
             print(f"command {command!r} failed: {exc}", file=sys.stderr)
             return 1
-        print(f"sent {command!r}; check the iAquaLink app reflects it, then re-run this probe")
+        # The write sets `desired`; the device then reports back. Give it a
+        # moment, or a command that worked looks like one that did nothing.
+        print(f"sent {command!r}, waiting {COMMAND_SETTLE_S}s for the device to report back")
+        time.sleep(COMMAND_SETTLE_S)
 
     try:
         shadow = client.get_shadow()
@@ -257,7 +293,8 @@ def _probe_zodiac(config: Config, credentials: Credentials, command: str | None)
         print(f"shadow read failed: {exc}", file=sys.stderr)
         return 1
 
-    from .zodiac import equipment_from_shadow, parse_shadow
+    if before is not None:
+        _report_change(before, equipment_from_shadow(shadow))
 
     print(f"\nshadow endpoint that answered: {client.shadow_path}")
     print("\n--- raw equipment block ---")

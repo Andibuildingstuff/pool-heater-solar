@@ -711,3 +711,27 @@ def test_the_setpoint_scale_is_not_applied_to_a_whole_degree_device():
     client.read_state()
     client.turn_on(Mode.BOOST, 26)
     assert session.calls[-1][2]["state"]["desired"]["equipment"]["hp_0"]["tsp"] == 26
+
+
+def test_a_mode_command_changes_the_mode_and_not_the_power():
+    """The distinction that made a no-op look like a success."""
+    session = FakeSession({"/users/v1/login": LOGIN_OK, "/shadow": FakeResponse(payload={})})
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    client.set_mode(Mode.BOOST)
+    fields = session.calls[-1][2]["state"]["desired"]["equipment"]["hp_0"]
+    assert fields == {"st": 0}
+    assert "state" not in fields, "a mode command must not touch the power switch"
+
+
+def test_turning_on_sets_the_power_switch_as_well_as_the_mode():
+    session = FakeSession({"/users/v1/login": LOGIN_OK, "/shadow": FakeResponse(payload={})})
+    client = ZodiacClient(
+        Credentials(zodiac_email="a@b.ch", zodiac_password="pw", zodiac_serial="S1"),
+        Config(), session=session,
+    )
+    client.turn_on(Mode.BOOST)
+    fields = session.calls[-1][2]["state"]["desired"]["equipment"]["hp_0"]
+    assert fields["state"] == 1 and fields["st"] == 0

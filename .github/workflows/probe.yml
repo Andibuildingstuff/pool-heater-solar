@@ -13,10 +13,10 @@ on:
         default: both
         options: [both, solar, zodiac]
       send:
-        description: "zodiac only: send a real command to confirm the app reflects it"
+        description: "Send a real command. on/off is the power switch; mode-* only changes the mode"
         type: choice
         default: none
-        options: [none, on, off, boost, ecosilence, smart]
+        options: [none, on, off, mode-boost, mode-ecosilence, mode-smart]
 
 permissions:
   contents: read

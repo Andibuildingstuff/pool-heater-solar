@@ -58,7 +58,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # --- tunables (unset = the documented default) -------------------------
-      DRY_RUN: ${{ inputs.mode == 'live' && 'false' || (inputs.mode == 'dry-run' && 'true' || vars.DRY_RUN) }}
+      # This deployment is live: the fallback is 'false', unlike the code's own
+      # safe default. Set the DRY_RUN repository variable to 'true' to put the
+      # whole schedule back into rehearsal without touching this file.
+      DRY_RUN: ${{ inputs.mode == 'live' && 'false' || (inputs.mode == 'dry-run' && 'true' || vars.DRY_RUN || 'false') }}
       ON_THRESHOLD: ${{ vars.ON_THRESHOLD }}
       IMPORT_THRESHOLD: ${{ vars.IMPORT_THRESHOLD }}
       DISCHARGE_THRESHOLD: ${{ vars.DISCHARGE_THRESHOLD }}

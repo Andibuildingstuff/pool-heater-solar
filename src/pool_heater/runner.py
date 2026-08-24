@@ -283,7 +283,7 @@ class Runner:
             state.consecutive_failures = 0
             state.failsafe_off_sent = False
             if decision.notify:
-                self._notify(decision.reason)
+                self._notify(decision.reason, state)
             return CycleResult(decision, reading, heater)
 
         verb = {
@@ -295,7 +295,7 @@ class Runner:
         if self.config.dry_run:
             LOGGER.info("DRY RUN would %s -- %s", verb, decision.reason)
             state.consecutive_failures = 0
-            self._notify(f"[dry run] would {verb}: {decision.reason}")
+            self._notify(f"[dry run] would {verb}: {decision.reason}", state)
             return CycleResult(decision, reading, heater, applied=False)
 
         try:
@@ -314,7 +314,7 @@ class Runner:
 
         state.consecutive_failures = 0
         state.failsafe_off_sent = False
-        self._notify(f"{verb}: {decision.reason}{self._context(reading, state)}")
+        self._notify(f"{verb}: {decision.reason}{self._context(reading, state)}", state)
         return CycleResult(decision, reading, heater, applied=True)
 
     def _command(self, decision: Decision) -> None:
@@ -371,7 +371,7 @@ class Runner:
             state.failsafe_off_sent = True
 
         if decision.notify:
-            self._notify(f"Pool heater automation problem\n{error}\n{decision.reason}")
+            self._notify(f"Pool heater automation problem\n{error}\n{decision.reason}", state)
             state.failsafe_off_sent = True
         return CycleResult(decision, error=error, applied=applied)
 
@@ -398,7 +398,21 @@ class Runner:
         LOGGER.info("%s", message)
         self._notify(message)
 
-    def _notify(self, text: str) -> None:
+    def _notify(self, text: str, state: State | None = None) -> None:
+        """Send, suppressing consecutive repeats of the same message.
+
+        A decision that cannot be recorded repeats every cycle -- dry run never
+        records the switch it would have made, so "would switch OFF, outside the
+        run window" arrives every five minutes all night. One message about a
+        situation is information; the ninetieth is spam that buries the one that
+        matters. The suppression is on the exact text and resets as soon as any
+        different message goes out, so a real change always gets through.
+        """
+        if state is not None:
+            if state.notes.get("last_notified") == text:
+                LOGGER.info("suppressing repeat notification: %s", text)
+                return
+            state.notes["last_notified"] = text
         self.notifier.send(text)
 
 

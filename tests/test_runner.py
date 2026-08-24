@@ -541,3 +541,33 @@ def test_a_genuine_outage_still_fails_safe(store):
     runner = build(store, solar=FakeSolar(surplus(6000)), zodiac=zodiac, seeded=state)
     result = runner.run_once()
     assert result.ok is False
+
+
+# --- one message about a situation, not ninety --------------------------------------
+
+
+def test_the_same_notification_is_not_repeated_every_cycle(store):
+    """Dry run cannot record its switch, so the decision repeats; the mail must not."""
+    evening = datetime(2026, 7, 15, 20, 5, tzinfo=ZURICH)
+    state = primed(evening, on=True)
+    runner = build(store, config=Config(dry_run=True),
+                   zodiac=FakeZodiac(HeaterState(on=True)), now=evening, seeded=state)
+    runner.run_once()
+    first_count = len(runner.notifier.messages)
+    assert first_count >= 1
+
+    later = evening + timedelta(minutes=5)
+    second = build(store, config=Config(dry_run=True),
+                   zodiac=FakeZodiac(HeaterState(on=True)), now=later)
+    second.run_once()
+    assert second.notifier.messages == [], "the identical message must be suppressed"
+
+
+def test_a_different_message_still_gets_through_after_a_repeat(store):
+    state = primed()
+    state.notes["last_notified"] = "[dry run] would switch OFF: outside the 10:00-20:00 run window"
+    runner = build(store, config=Config(dry_run=True), seeded=state)
+    runner.run_once()
+    assert any("would switch ON" in m for m in runner.notifier.messages), (
+        "a message with different content is not a repeat"
+    )

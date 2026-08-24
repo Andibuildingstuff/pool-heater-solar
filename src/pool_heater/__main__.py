@@ -19,7 +19,6 @@ from datetime import datetime
 from . import control
 from .config import Config, ConfigError, Credentials
 from .models import Mode
-from .notify import Notifier
 from .runner import Runner, run_loop
 from .solar_manager import SolarManagerClient, SolarManagerError, id_fields
 from .state import StateStore

@@ -295,7 +295,11 @@ class Runner:
         if self.config.dry_run:
             LOGGER.info("DRY RUN would %s -- %s", verb, decision.reason)
             state.consecutive_failures = 0
-            self._notify(f"[dry run] would {verb}: {decision.reason}", state)
+            self._notify(
+                f"[dry run] would {verb}: {decision.reason}",
+                state,
+                key=f"dry-run:{verb}",
+            )
             return CycleResult(decision, reading, heater, applied=False)
 
         try:
@@ -398,21 +402,23 @@ class Runner:
         LOGGER.info("%s", message)
         self._notify(message)
 
-    def _notify(self, text: str, state: State | None = None) -> None:
-        """Send, suppressing consecutive repeats of the same message.
+    def _notify(self, text: str, state: State | None = None, key: str | None = None) -> None:
+        """Send, suppressing consecutive repeats of the same situation.
 
         A decision that cannot be recorded repeats every cycle -- dry run never
-        records the switch it would have made, so "would switch OFF, outside the
-        run window" arrives every five minutes all night. One message about a
-        situation is information; the ninetieth is spam that buries the one that
-        matters. The suppression is on the exact text and resets as soon as any
-        different message goes out, so a real change always gets through.
+        records the switch it would have made, so "would switch ON" arrived nine
+        times in forty minutes, each with a fresh wattage that let it past an
+        exact-text comparison. So the suppression key is the *kind* of message,
+        not its wording: what would be done, not the numbers it would be done
+        with. Any different kind of message clears the suppression, so a real
+        change of situation always gets through.
         """
+        key = key or text
         if state is not None:
-            if state.notes.get("last_notified") == text:
+            if state.notes.get("last_notified") == key:
                 LOGGER.info("suppressing repeat notification: %s", text)
                 return
-            state.notes["last_notified"] = text
+            state.notes["last_notified"] = key
         self.notifier.send(text)
 
 

@@ -571,3 +571,24 @@ def test_a_different_message_still_gets_through_after_a_repeat(store):
     assert any("would switch ON" in m for m in runner.notifier.messages), (
         "a message with different content is not a repeat"
     )
+
+
+def test_dry_run_switch_on_with_changing_numbers_is_still_a_repeat(store):
+    """Nine comments in forty minutes, each with a fresh wattage: same situation."""
+    state = primed()
+    state.notes["last_notified"] = "dry-run:switch ON"
+    runner = build(store, config=Config(dry_run=True), seeded=state)
+    runner.run_once()
+    assert runner.notifier.messages == [], (
+        "a would-switch-ON with different numbers is the same situation"
+    )
+
+
+def test_a_dry_run_off_after_a_dry_run_on_gets_through(store):
+    evening = datetime(2026, 7, 15, 20, 5, tzinfo=ZURICH)
+    state = primed(evening, on=True)
+    state.notes["last_notified"] = "dry-run:switch ON"
+    runner = build(store, config=Config(dry_run=True),
+                   zodiac=FakeZodiac(HeaterState(on=True)), now=evening, seeded=state)
+    runner.run_once()
+    assert any("would switch OFF" in m for m in runner.notifier.messages)

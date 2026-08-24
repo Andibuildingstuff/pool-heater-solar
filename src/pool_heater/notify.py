@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -149,13 +149,14 @@ class GitHubIssueNotifier:
     def send(self, text: str, now: datetime | None = None) -> bool:
         if not self.configured:
             return False
-        when = now or datetime.now()
+        when = now or datetime.now(timezone.utc)
         if self._issue is None:
             self._issue = self._find_or_open(self._title(when))
         if self._issue is None:
             return False
 
-        body = f"**{when:%Y-%m-%d %H:%M %Z}**\n\n{text}"
+        stamp = f"{when:%Y-%m-%d %H:%M %Z}".strip()
+        body = f"**{stamp}**\n\n{text}"
         try:
             response = self._session.post(
                 f"{self._base}/repos/{self._repo}/issues/{self._issue}/comments",

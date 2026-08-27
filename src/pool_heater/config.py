@@ -209,6 +209,10 @@ class Config:
 
     # --- refinements ----------------------------------------------------------
     ecosilence_enabled: bool = False
+    # True: the car keeps the surplus it is using and the heater waits for
+    # margin on top. False: the pool ranks with the house itself -- power the
+    # car is drawing counts as claimable for the start decision, and the
+    # charger's own surplus management ramps the car down to what is left.
     car_priority: bool = True
     car_active_w: float = 3000.0
     car_priority_margin_w: float = 1000.0

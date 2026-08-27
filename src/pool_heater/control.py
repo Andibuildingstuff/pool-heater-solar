@@ -72,8 +72,24 @@ def on_threshold_for(reading: Reading, config: Config) -> float:
     return config.on_threshold_w
 
 
+def claimable_surplus(reading: Reading, config: Config) -> float:
+    """The power the heater may treat as available before starting.
+
+    The raw surplus nets the car out: watts flowing into the charger are
+    neither exported nor stored, so a car charging on solar makes the surplus
+    read as zero. With car priority on, that is the intent -- the car keeps
+    what it has. With it off, the pool ranks with the house itself and the car
+    is the deferrable load, so power the car is currently taking counts as
+    claimable: once the heater draws it, the charger's own surplus management
+    ramps the car down to whatever is left.
+    """
+    if config.car_priority:
+        return reading.surplus_w
+    return reading.surplus_w + reading.car_w
+
+
 def surplus_holding(reading: Reading, config: Config) -> bool:
-    return reading.surplus_w >= on_threshold_for(reading, config)
+    return claimable_surplus(reading, config) >= on_threshold_for(reading, config)
 
 
 def off_condition(reading: Reading, config: Config) -> tuple[bool, str]:
@@ -219,11 +235,18 @@ def decide(
         )
 
     # -- The heater is off: may it start? -------------------------------------
+    available = claimable_surplus(reading, config)
+    car_share = (
+        f" (incl. {reading.car_w:.0f} W now going to the car)"
+        if not config.car_priority and reading.car_w > 0
+        else ""
+    )
     if not surplus_holding(reading, config):
         threshold = on_threshold_for(reading, config)
         return Decision(
             Action.NONE,
-            f"surplus {reading.surplus_w:.0f} W is below the {threshold:.0f} W start threshold",
+            f"surplus {available:.0f} W{car_share} is below the "
+            f"{threshold:.0f} W start threshold",
         )
 
     if not streak_held(
@@ -231,7 +254,7 @@ def decide(
     ):
         return Decision(
             Action.NONE,
-            f"surplus {reading.surplus_w:.0f} W, waiting for the "
+            f"surplus {available:.0f} W{car_share}, waiting for the "
             f"{config.on_delay_min:.0f} min on-delay ({state.surplus_samples} reading(s) so far)",
         )
 
@@ -272,11 +295,11 @@ def decide(
         )
 
     mode = config.on_mode
-    if config.ecosilence_enabled and reading.surplus_w < config.on_threshold_w:
+    if config.ecosilence_enabled and available < config.on_threshold_w:
         mode = Mode.ECOSILENCE
     return Decision(
         Action.TURN_ON,
-        f"surplus {reading.surplus_w:.0f} W held for "
+        f"surplus {available:.0f} W{car_share} held for "
         f"{_streak_minutes(state.surplus_since, now):.0f} min",
         mode=mode,
         notify=True,

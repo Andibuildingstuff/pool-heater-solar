@@ -79,7 +79,9 @@ jobs:
       FORCE_OFF_SEASON: ${{ vars.FORCE_OFF_SEASON }}
       TIMEZONE: ${{ vars.TIMEZONE }}
       ECOSILENCE_ENABLED: ${{ vars.ECOSILENCE_ENABLED }}
-      CAR_PRIORITY: ${{ vars.CAR_PRIORITY }}
+      # This deployment: the pool ranks with the house and the car takes what
+      # is left over, so the fallback is 'false' (the code default is 'true').
+      CAR_PRIORITY: ${{ vars.CAR_PRIORITY || 'false' }}
       CAR_ACTIVE_W: ${{ vars.CAR_ACTIVE_W }}
       CAR_PRIORITY_MARGIN_W: ${{ vars.CAR_PRIORITY_MARGIN_W }}
       SOLAR_MANAGER_CAR_DEVICE_ID: ${{ vars.SOLAR_MANAGER_CAR_DEVICE_ID }}

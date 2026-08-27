@@ -232,6 +232,29 @@ def test_a_trickle_charging_car_does_not_raise_the_bar(config, state):
     assert decide(now, reading, OFF, state, config).action is Action.TURN_ON
 
 
+def test_without_car_priority_the_cars_draw_counts_as_claimable(config, state):
+    """The car eating every watt reads as zero surplus; the heater may still claim it."""
+    relaxed = replace(config, car_priority=False)
+    reading, now = feed(state, relaxed, [surplus(200, car_w=6000)] * 2)
+    decision = decide(now, reading, OFF, state, relaxed)
+    assert decision.action is Action.TURN_ON
+    assert "6200 W" in decision.reason
+    assert "going to the car" in decision.reason
+
+
+def test_with_car_priority_the_cars_draw_is_untouchable(config, state):
+    reading, now = feed(state, config, [surplus(200, car_w=6000)] * 3)
+    decision = decide(now, reading, OFF, state, config)
+    assert decision.action is Action.NONE
+
+
+def test_without_car_priority_and_no_sun_the_heater_still_waits(config, state):
+    """A car trickle at dusk must not read as startable surplus on its own."""
+    relaxed = replace(config, car_priority=False)
+    reading, now = feed(state, relaxed, [surplus(0, car_w=1400)] * 2)
+    assert decide(now, reading, OFF, state, relaxed).action is Action.NONE
+
+
 # --- the EcoSilence refinement ----------------------------------------------------
 
 

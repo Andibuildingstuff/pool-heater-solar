@@ -1,0 +1,27 @@
+{
+  "budget_day": "2026-09-19",
+  "commanded_mode": null,
+  "commanded_on": false,
+  "consecutive_failures": 0,
+  "device_mode": "boost",
+  "device_on": false,
+  "failed_starts_today": 0,
+  "failsafe_off_sent": false,
+  "last_alert_at": null,
+  "last_off_at": "2026-09-19T18:38:48.239888+02:00",
+  "last_off_season_check_at": "2026-09-19T09:03:36.585011+02:00",
+  "last_on_at": "2026-09-18T10:43:48.773153+02:00",
+  "last_reading_at": "2026-09-19T19:44:02.536253+02:00",
+  "last_shadow_at": "2026-09-19T19:39:02.537256+02:00",
+  "notes": {
+    "last_notified": "switch OFF: battery discharging 1512 W at 87% SoC\nsurplus 0 W (export 0 + battery 0), PV 1859 W\nstarts today: 0/3"
+  },
+  "offcond_samples": 4,
+  "offcond_since": "2026-09-19T19:29:02.537019+02:00",
+  "season_active": true,
+  "start_verified": false,
+  "surplus_samples": 0,
+  "surplus_since": null,
+  "switch_ons_today": 0,
+  "version": 1
+}

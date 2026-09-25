@@ -11,13 +11,21 @@
 
 name: Pool heater
 
+# ---------------------------------------------------------------------------
+# OFF FOR THE SEASON (25 Sep 2026). To re-arm next spring, do both of these:
+#   1. uncomment the `schedule:` block below;
+#   2. put FORCE_OFF_SEASON back to `${{ vars.FORCE_OFF_SEASON }}` (search for
+#      it further down -- it currently falls back to 'true').
+# Doing only the first would run the loop with every ON refused; doing only the
+# second would leave nothing to wake it.
+# ---------------------------------------------------------------------------
 on:
-  schedule:
-    # Asking for every five minutes; GitHub has been delivering roughly one an
-    # hour on this repository. Rather than fight that, each run cycles
-    # internally for LOOP_MINUTES so the control logic still sees readings five
-    # minutes apart. The cron is the wake-up, not the clock.
-    - cron: "*/5 * * * *"
+  # schedule:
+  #   # Asking for every five minutes; GitHub has been delivering roughly one an
+  #   # hour on this repository. Rather than fight that, each run cycles
+  #   # internally for LOOP_MINUTES so the control logic still sees readings five
+  #   # minutes apart. The cron is the wake-up, not the clock.
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -76,7 +84,11 @@ jobs:
       SEASON_START: ${{ vars.SEASON_START }}
       SEASON_END: ${{ vars.SEASON_END }}
       OFF_SEASON_MODE: ${{ vars.OFF_SEASON_MODE }}
-      FORCE_OFF_SEASON: ${{ vars.FORCE_OFF_SEASON }}
+      # Season shutdown: the fallback is 'true' so that while the schedule is
+      # switched off, any manual dispatch is a caretaker run -- it will never
+      # start the heater, and will switch it off if it finds it running. Put
+      # this back to `${{ vars.FORCE_OFF_SEASON }}` when re-arming.
+      FORCE_OFF_SEASON: ${{ vars.FORCE_OFF_SEASON || 'true' }}
       TIMEZONE: ${{ vars.TIMEZONE }}
       ECOSILENCE_ENABLED: ${{ vars.ECOSILENCE_ENABLED }}
       # This deployment: the pool ranks with the house and the car takes what

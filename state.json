@@ -1,0 +1,27 @@
+{
+  "budget_day": "2026-09-25",
+  "commanded_mode": null,
+  "commanded_on": false,
+  "consecutive_failures": 0,
+  "device_mode": "boost",
+  "device_on": false,
+  "failed_starts_today": 0,
+  "failsafe_off_sent": false,
+  "last_alert_at": null,
+  "last_off_at": "2026-09-25T18:33:02.349622+02:00",
+  "last_off_season_check_at": "2026-09-25T18:38:02.349759+02:00",
+  "last_on_at": "2026-09-25T10:41:50.073335+02:00",
+  "last_reading_at": "2026-09-25T18:27:15.538158+02:00",
+  "last_shadow_at": "2026-09-25T18:38:02.349759+02:00",
+  "notes": {
+    "last_notified": "switch OFF: FORCE_OFF_SEASON is set, but the heater is running"
+  },
+  "offcond_samples": 0,
+  "offcond_since": null,
+  "season_active": false,
+  "start_verified": false,
+  "surplus_samples": 0,
+  "surplus_since": null,
+  "switch_ons_today": 1,
+  "version": 1
+}
